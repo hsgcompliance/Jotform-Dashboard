@@ -22,12 +22,15 @@ const renderCell = ans => {
   }
 
   /* plain string – may be URL */
-  const isURL = /^https?:\/\//.test(ans);
-  return isURL ? (
-    <a href={ans} target="_blank" rel="noreferrer">
-      {ans.split('/').pop().slice(0, 40)}
-    </a>
-  ) : ans;
+  if (typeof ans === 'string') {
+    const isURL = /^https?:\/\//.test(ans);
+    return isURL ? (
+      <a href={ans} target="_blank" rel="noreferrer">
+        {ans.split('/').pop().slice(0, 40)}
+      </a>
+    ) : ans;
+  }
+  return Array.isArray(ans) ? ans.join(', ') : String(ans);
 };
 
 /* main table component */
