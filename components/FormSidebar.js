@@ -1,4 +1,7 @@
-export default function FormSidebar({ forms, selected, onSelect, search, setSearch }) {
+import { IconButton, Chip } from '@mui/material';
+import EditIcon from '@mui/icons-material/Edit';
+
+export default function FormSidebar({ forms, selected, onSelect, search, setSearch, tags = {}, onEditTags }) {
   return (
     <div style={{ width: '26%', minWidth: 250, borderRight: '1px solid #ddd', padding: 16, overflowY: 'auto' }}>
       <input
@@ -10,6 +13,16 @@ export default function FormSidebar({ forms, selected, onSelect, search, setSear
       <ul style={{ listStyle: 'none', padding: 0 }}>
         {forms.map(f => (
           <li key={f.id} style={{ marginBottom: 8 }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+              <span>{f.title}</span>
+              <IconButton size="small" onClick={() => onEditTags(f)}><EditIcon fontSize="inherit" /></IconButton>
+            </div>
+            {tags[f.id]?.length && (
+              <div style={{ marginTop:4 }}>
+                {tags[f.id].map(tag => <Chip key={tag} label={tag} size="small" sx={{ mr:0.5 }} />)}
+              </div>
+            )}
+
             <button
               onClick={() => onSelect(f)}
               style={{

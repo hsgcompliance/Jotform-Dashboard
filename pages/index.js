@@ -9,6 +9,10 @@ import SubList        from '../components/SubList';
 import AnswerTable    from '../components/AnswerTable';
 import ManualRefresh  from '../components/ManualRefresh';
 
+ import TagFilterBar     from '../components/TagFilterBar';
+ import FormTagPicker    from '../components/FormTagPicker';
+ import useFormTags      from '../components/useFormTags';
+
 /* local-storage helpers for subs */
 const rLS = k => (typeof window !== 'undefined' ? localStorage.getItem(k) : null);
 const wLS = (k,v) => { if (typeof window !== 'undefined') localStorage.setItem(k,v); };
@@ -34,6 +38,12 @@ export default function Dashboard() {
   const [searchForms, setSearchForms] = useState('');
   const [searchSubs,  setSearchSubs]  = useState('');
 
+  /* ─── Tag state ─── */
+  const [tagMap, setTagMap]     = useFormTags();
+  const [tagDialog, setTagDialog] = useState(null);  // form being edited
+  const [activeTags, setActiveTags] = useState([]);
+  const onEditTags = form => setTagDialog(form);
+  
   /* ─── Get submissions (with caching) ─── */
   const loadSubs = (formId) => {
     if (subsCache[formId]) { setSubs(subsCache[formId]); return; }
@@ -56,9 +66,9 @@ export default function Dashboard() {
   }, [selectedForm]);
 
   /* ─── Filtering helpers ─── */
-  const filteredForms = forms.filter(f =>
-    f.title.toLowerCase().includes(searchForms.toLowerCase())
-  );
+const matchesTitle = f => f.title.toLowerCase().includes(searchForms.toLowerCase());
+const matchesTags  = f => activeTags.length === 0 || (tagMap[f.id] || []).some(t => activeTags.includes(t));
+const filteredForms = forms.filter(f => matchesTitle(f) && matchesTags(f));
   const filteredSubs = subs.filter(s =>
     JSON.stringify(s.answers).toLowerCase().includes(searchSubs.toLowerCase())
   );
@@ -74,6 +84,11 @@ export default function Dashboard() {
 
       {/* body */}
       <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
+        <TagFilterBar
+          allTags={[...new Set(Object.values(tagMap).flat())]}
+          active={activeTags}
+          setActive={setActiveTags}
+        />
         {/* sidebar */}
         <FormSidebar
           forms={filteredForms}
@@ -81,6 +96,8 @@ export default function Dashboard() {
           onSelect={setSelectedForm}
           search={searchForms}
           setSearch={setSearchForms}
+          tags={tagMap}
+          onEditTags={onEditTags}
         />
 
         {/* submissions + detail */}
@@ -111,6 +128,14 @@ export default function Dashboard() {
               : <p>{selectedForm ? 'Select a submission.' : '—'}</p>}
           </div>
         </div>
+        {tagDialog && (
+          <FormTagPicker
+            open
+            tags={tagMap[tagDialog.id] || []}
+            setTags={t => setTagMap(tagDialog.id, t)}
+            onClose={() => setTagDialog(null)}
+          />
+        )}
       </div>
     </div>
   );
