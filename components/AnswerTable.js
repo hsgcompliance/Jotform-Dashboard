@@ -30,6 +30,7 @@ const renderCell = ans => {
       </a>
     ) : ans;
   }
+  console.warn('renderCell: non-string answer', ans);
   return Array.isArray(ans) ? ans.join(', ') : String(ans);
 };
 

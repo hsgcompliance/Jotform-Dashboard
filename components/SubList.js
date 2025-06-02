@@ -5,7 +5,7 @@ function pickName(answers = {}) {
     const a = field?.answer;
     if (!a) continue;
 
-    if (typeof a === 'string' && a.length > 3 && !a.startsWith('{')) {
+    if (typeof a === 'string') {
       return a;
     }
 
@@ -13,7 +13,7 @@ function pickName(answers = {}) {
       return a.name;
     }
   }
-
+  console.warn('pickName: could not derive name', answers);
   return 'Untitled submission';
 }
 

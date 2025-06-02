@@ -3,6 +3,7 @@ import { createTheme, ThemeProvider, CssBaseline } from '@mui/material';
 import { useMemo, useState } from 'react';
 import Gate from '../components/Gate';
 import Nav from '../components/Nav';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 export default function MyApp({ Component, pageProps: { session, ...rest } }) {
   const [mode, setMode] = useState('light');
@@ -23,8 +24,10 @@ export default function MyApp({ Component, pageProps: { session, ...rest } }) {
 
         {/* auth gate + NAV + page */}
         <Gate>
-          <Nav />
-          <Component {...rest} />
+          <ErrorBoundary>
+            <Nav />
+            <Component {...rest} />
+          </ErrorBoundary>
         </Gate>
       </ThemeProvider>
     </SessionProvider>
