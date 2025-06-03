@@ -1,37 +1,85 @@
-import { useState } from 'react';
-import { Dialog, DialogTitle, DialogActions, DialogContent,
-         Button, TextField, Chip, Stack } from '@mui/material';
+// components/FormTagPicker.js
+import { useEffect, useState } from 'react';
+import {
+  Dialog,
+  DialogTitle,
+  DialogActions,
+  DialogContent,
+  Button,
+  Autocomplete,
+  TextField,
+  Chip,
+  Stack
+} from '@mui/material';
 
-export default function FormTagPicker({ open, onClose, tags, setTags }) {
-  const [input, setInput] = useState('');
+export default function FormTagPicker({
+  open,
+  onClose,
+  existingTags = [],   // all tags across forms
+  tags = [],           // current tags on this form
+  setTags             // function(formId, tagsArray)
+}) {
+  const [inputValue, setInputValue]   = useState('');
+  const [selected, setSelected]       = useState(tags);
 
-  const add = () => {
-    const t = input.trim();
-    if (t && !tags.includes(t)) setTags([...tags, t]);
-    setInput('');
+  // When dialog reopens with different `tags`, reset
+  useEffect(() => {
+    setSelected(tags);
+  }, [tags]);
+
+  const handleSave = () => {
+    setTags(selected);
+    onClose();
   };
-  const remove = t => setTags(tags.filter(x => x !== t));
 
   return (
-    <Dialog open={open} onClose={onClose}>
+    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth>
       <DialogTitle>Edit Tags</DialogTitle>
       <DialogContent>
-        <Stack direction="row" spacing={1} sx={{ flexWrap:'wrap', mb:2 }}>
-          {tags.map(t => (
-            <Chip key={t} label={t} onDelete={() => remove(t)} />
-          ))}
+        <Stack spacing={1} sx={{ mt: 1 }}>
+          <Autocomplete
+            multiple
+            freeSolo
+            options={existingTags}                // all tags in the system
+            value={selected}
+            onChange={(e, newVal) => setSelected(newVal)}
+            inputValue={inputValue}
+            onInputChange={(e, v) => setInputValue(v)}
+            renderTags={(value, getTagProps) =>
+              value.map((option, index) => (
+                <Chip
+                  variant="outlined"
+                  label={option.toUpperCase()}
+                  size="small"
+                  {...getTagProps({ index })}
+                  key={option}
+                />
+              ))
+            }
+            renderInput={params => (
+              <TextField
+                {...params}
+                label="Tags (type or select...)"
+                placeholder="Enter a tag"
+                onKeyDown={e => {
+                  // Press Enter → commit uppercase
+                  if (e.key === 'Enter' && inputValue.trim()) {
+                    e.preventDefault();
+                    const upper = inputValue.trim().toUpperCase();
+                    if (!selected.includes(upper)) {
+                      setSelected([...selected, upper]);
+                    }
+                    setInputValue('');
+                  }
+                }}
+              />
+            )}
+          />
         </Stack>
-        <TextField
-          size="small"
-          label="New tag"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key==='Enter' && add()}
-        />
       </DialogContent>
       <DialogActions>
-        <Button onClick={add}>Add</Button>
-        <Button onClick={onClose}>Close</Button>
+        <Button onClick={onClose}>Cancel</Button>
+        <Button onClick={handleSave} variant="contained">Save</Button>
       </DialogActions>
     </Dialog>
   );
