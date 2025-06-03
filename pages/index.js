@@ -3,14 +3,14 @@ import { useSession, signIn } from 'next-auth/react';
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 
-import useCachedForms from '../components/useCachedForms';
-import useFormTags    from '../components/useFormTags';
-import FormSidebar    from '../components/FormSidebar';
-import SubList        from '../components/SubList';
-import AnswerTable    from '../components/AnswerTable';
-import ManualRefresh  from '../components/ManualRefresh';
-import TagFilterBar   from '../components/TagFilterBar';
-import FormTagPicker  from '../components/FormTagPicker';
+import useAllForms   from '../components/useAllForms';
+import useFormTags   from '../components/useFormTags';
+import FormSidebar   from '../components/FormSidebar';
+import SubList       from '../components/SubList';
+import AnswerTable   from '../components/AnswerTable';
+import ManualRefresh from '../components/ManualRefresh';
+import TagFilterBar  from '../components/TagFilterBar';
+import FormTagPicker from '../components/FormTagPicker';
 
 /* ─────── localStorage helpers for subs ─────── */
 const rLS = k => (typeof window !== 'undefined' ? localStorage.getItem(k) : null);
@@ -26,11 +26,20 @@ export default function Dashboard() {
     </div>
   );
 
-  /* ─── Forms (cached hook) ─── */
-  const [forms, reloadForms] = useCachedForms();
+  /* ─── Forms (combined normal + Sign) ─── */
+  const [allForms, reloadForms] = useAllForms();
 
   /* ─── Tag state ─── */
-  const [tagMap, setTagMap]       = useFormTags();  // { formId: [ 'TAG1', ... ] }
+  const [rawTagMap, setRawTagMap] = useFormTags(); // user-defined tags
+  // Build a “computed” tagMap that ensures Sign forms always include “JOTSIGN”
+  const tagMap = {};
+  allForms.forEach(f => {
+    const userTags = rawTagMap[f.id] || [];
+    const signTag = f.isSign ? ['JOTSIGN'] : [];
+    tagMap[f.id] = Array.from(
+      new Set([ ...userTags.map(t => t.toUpperCase()), ...signTag ])
+    );
+  });
   const [tagDialog, setTagDialog] = useState(null);  // form object being edited
   const [activeTags, setActiveTags] = useState([]);  // [ 'TAG1', 'TAG2' ]
 
@@ -44,7 +53,7 @@ export default function Dashboard() {
   const [searchForms,  setSearchForms]  = useState('');
   const [searchSubs,   setSearchSubs]   = useState('');
 
-  /* ─── Get submissions (with caching) ─── */
+  /* ─── Get regular submissions (with caching) ─── */
   const loadSubs = formId => {
     if (subsCache[formId]) {
       setSubs(subsCache[formId]);
@@ -64,11 +73,43 @@ export default function Dashboard() {
       wLS(`subs_${formId}`, JSON.stringify(list));
     });
   };
+  
+  /* ─── Get Sign submissions (signed documents) ─── */
+  const loadSignDocs = async formId => {
+    setSubs([]); // clear out any old entries
+    try {
+      const { data } = await axios.get(`/api/signDocs?formId=${formId}`);
+      // data is array of { id, created_at, download_url, signers: [...] }
+      const mapped = data.map(doc => ({
+        id: doc.id,
+        isSign: true,
+        created_at: doc.signers?.[0]?.signed_at || doc.created_at,
+        answers: {
+          signer: {
+            text: 'Signer',
+            answer: doc.signers?.[0]?.name || 'Unknown'
+          },
+          pdf: {
+            text: 'Signed PDF',
+            answer: doc.download_url
+          }
+        }
+      }));
+      setSubs(mapped);
+    } catch (err) {
+      console.error('Error loading Sign docs:', err);
+      setSubs([]);
+    }
+  };
 
   /* ─── Load subs on form change ─── */
   useEffect(() => {
-    if (selectedForm) {
-      setSelSub(null);
+    if (!selectedForm) return;
+
+    setSelSub(null);
+    if (selectedForm.isSign) {
+      loadSignDocs(selectedForm.id);
+    } else {
       loadSubs(selectedForm.id);
     }
   }, [selectedForm]);
@@ -80,7 +121,7 @@ export default function Dashboard() {
     const fTags = tagMap[f.id] || [];
     return fTags.some(t => activeTags.includes(t));
   };
-  const filteredForms = forms.filter(f => matchesTitle(f) && matchesTags(f));
+  const filteredForms = allForms.filter(f => matchesTitle(f) && matchesTags(f));
 
   const filteredSubs = subs.filter(s =>
     JSON.stringify(s.answers).toLowerCase().includes(searchSubs.toLowerCase())
@@ -89,6 +130,7 @@ export default function Dashboard() {
   /* ─── UI ─── */
   return (
     <div style={{ height:'100vh', display:'flex', flexDirection:'column' }}>
+
       {/* header */}
       <header style={{
         padding:16,
@@ -184,7 +226,7 @@ export default function Dashboard() {
             open
             existingTags={[...new Set(Object.values(tagMap).flat())]}
             tags={tagMap[tagDialog.id] || []}
-            setTags={newTags => setTagMap(tagDialog.id, newTags)}
+            setTags={newTags => setRawTagMap(tagDialog.id, newTags)}
             onClose={() => setTagDialog(null)}
           />
         )}

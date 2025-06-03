@@ -1,39 +1,40 @@
 // pages/live.js
+
 import { useEffect, useState } from 'react';
-import { Stack, Typography, Paper } from '@mui/material';
 import axios from 'axios';
 
-import FormPicker     from '../components/FormPicker';
-import ManualRefresh  from '../components/ManualRefresh';
-import PDFButton      from '../components/PDFButton';
-import TagFilterBar   from '../components/TagFilterBar';
+import { Stack, Typography, Paper } from '@mui/material';
 
-import useCachedForms from '../components/useCachedForms';
-import useFormTags    from '../components/useFormTags';
+import useAllForms   from '../components/useAllForms';
+import useFormTags   from '../components/useFormTags';
+import TagFilterBar  from '../components/TagFilterBar';
+import FormPicker    from '../components/FormPicker';
+import ManualRefresh from '../components/ManualRefresh';
+import PDFButton     from '../components/PDFButton';
 
-/* ---------- Helpers ---------- */
+/* ───── Helpers ───── */
 
-// 1) Pick a human-friendly “submission name” from fields
-const pickName = sub => {
+// 1) Try to pick a human‐readable “name” for a normal submission
+const pickNameForForm = sub => {
   const ansArray = Object.values(sub.answers || {});
 
-  // Full Name widget
+  // Look for full‐name widget
   for (const field of ansArray) {
     if (field.type?.includes('fullname')) {
       const { first, last, firstName, lastName } = field.answer || {};
-      const fullName = `${first || firstName || ''} ${last || lastName || ''}`.trim();
-      if (fullName) return fullName;
+      const full = `${first || firstName || ''} ${last || lastName || ''}`.trim();
+      if (full) return full;
     }
   }
 
-  // Email field
+  // Look for email widget
   for (const field of ansArray) {
     if (field.type?.includes('email') && typeof field.answer === 'string') {
       return field.answer;
     }
   }
 
-  // First short, non-JSON, non-URL text
+  // Fallback: first short, non‐URL, non‐JSON text answer
   for (const field of ansArray) {
     const a = field.answer;
     if (
@@ -49,77 +50,197 @@ const pickName = sub => {
   return '—';
 };
 
+/* ───── Main Component ───── */
 export default function Live() {
-  /* ─── Cached forms & tag map ─── */
-  const [forms] = useCachedForms();       // [ { id, title, ... }, … ]
-  const [tagMap] = useFormTags();         // { formId: ['TAG1','TAG2'], … }
+  /* ─── Load all forms (normal + Sign) ─── */
+  const [allForms] = useAllForms();
+  // Build a quick map formId → title
+  const id2title = Object.fromEntries(allForms.map(f => [f.id, f.title]));
 
-  /* Build a quick map from formId → title for “All forms” view */
-  const id2title = Object.fromEntries(forms.map(f => [f.id, f.title]));
-
-  /* ─── Local state ─── */
-  const [form, setForm]               = useState(null);     // selected form object or null = all
-  const [subs, setSubs]               = useState([]);       // array of latest submissions
-  const [loading, setLoading]         = useState(false);    // spinner for refresh
-  const [filterTags, setFilterTags]   = useState([]);       // array of uppercase tags to filter by
-
-  /* ─── Fetch submissions helper ─── */
-  const fetchSubs = () => {
-    setLoading(true);
-    const url = form ? `/api/submissions?id=${form.id}` : '/api/latest';
-    axios.get(url)
-      .then(res => {
-        const list = form ? res.data.content : res.data;
-        setSubs(list.slice(0, 20));   // keep only top 20
-      })
-      .catch(() => {
-        // silently ignore errors; you can console.error here if desired
-      })
-      .finally(() => {
-        setLoading(false);
-      });
-  };
-
-  /* ─── Load submissions on mount & when `form` changes ─── */
-  useEffect(() => {
-    fetchSubs();
-  }, [form]);
-
-  /* ─── Filter submissions by tags (if any) ─── */
-  const filteredSubs = subs.filter(s => {
-    if (filterTags.length === 0) return true;
-    const sTags = tagMap[s.form_id] || [];
-    return sTags.some(t => filterTags.includes(t));
+  /* ─── Build tag map (inject “JOTSIGN” on Sign forms) ─── */
+  const [rawTagMap] = useFormTags(); // user‐defined tags
+  const tagMap = {};
+  allForms.forEach(f => {
+    const userTags = rawTagMap[f.id] || [];
+    const signTag  = f.isSign ? ['JOTSIGN'] : [];
+    tagMap[f.id] = Array.from(new Set([
+      ...userTags.map(t => t.toUpperCase()),
+      ...signTag
+    ]));
   });
 
-  /* ─── Get display title for a submission `s` ─── */
-  const getTitle = s => {
-    // If a form is selected, always show that form’s title
-    if (form?.title) return form.title;
-    // Otherwise, use the `form_title` returned by API or our cached map
-    return s.form_title || id2title[s.form_id] || s.form_id;
+  /* ─── Local state ─── */
+  const [filterTags, setFilterTags] = useState([]); // e.g. ['JOTSIGN', 'FINANCE']
+  const [form, setForm]             = useState(null);   // selected form or null = all
+  const [subs, setSubs]             = useState([]);     // merged array of submissions + sign docs
+  const [loading, setLoading]       = useState(false);  // spinner on refresh
+
+  /* ─── Fetch normal submissions (latest 20) ─── */
+  const fetchLatest = async () => {
+    try {
+      const { data } = await axios.get('/api/latest');
+      // data is array of normal submission objects
+      return data; 
+    } catch {
+      return [];
+    }
+  };
+
+  /* ─── Fetch all Sign docs for every Sign‐type form ─── */
+  const fetchAllSignDocs = async () => {
+    const signFormIds = allForms.filter(f => f.isSign).map(f => f.id);
+    let docs = [];
+
+    for (const fid of signFormIds) {
+      try {
+        const { data } = await axios.get(`/api/signDocs?formId=${fid}`);
+        // data is array of { id, created_at, download_url, signers: [...] }
+        const mapped = data.map(doc => ({
+          id: doc.id,
+          form_id: fid,
+          form_title: id2title[fid],  // use our cached title
+          isSign: true,
+          created_at: doc.signers?.[0]?.signed_at || doc.created_at,
+          answers: {
+            signer: {
+              text: 'Signer',
+              answer: doc.signers?.[0]?.name || '—'
+            },
+            pdf: {
+              text: 'Signed PDF',
+              answer: doc.download_url
+            }
+          }
+        }));
+        docs = docs.concat(mapped);
+      } catch (e) {
+        console.error('Failed to fetch Sign docs for form', fid, e.response?.data || e.message);
+      }
+    }
+
+    return docs;
+  };
+
+  /* ─── Load “live” feed (normal + Sign) ─── */
+  const loadLive = async () => {
+    setLoading(true);
+    const latest   = await fetchLatest();
+    const signDocs = await fetchAllSignDocs();
+
+    // Merge normal submissions (tag as isSign:false) with Sign docs (isSign:true)
+    const combined = [
+      ...latest.map(s => ({ ...s, isSign: false })),
+      ...signDocs
+    ];
+
+    // Sort by created_at descending
+    combined.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    // Filter by tags: if filterTags is empty, show all; else only those whose form_id has one of the filterTags
+    const visible = combined.filter(s => {
+      if (filterTags.length === 0) return true;
+      const fTags = tagMap[s.form_id] || [];
+      return fTags.some(t => filterTags.includes(t));
+    });
+
+    setSubs(visible.slice(0, 20)); // keep top 20
+    setLoading(false);
+  };
+
+  /* ─── On mount or when form list / filterTags changes, reload ─── */
+  useEffect(() => {
+    loadLive();
+    const intervalId = setInterval(loadLive, 30_000); // refresh every 30s
+    return () => clearInterval(intervalId);
+  }, [allForms, filterTags]);
+
+  /* ─── Decide whether to fetch only one form’s items ─── */
+  useEffect(() => {
+    // If a specific form is selected, reload so that it fetches only that form’s items
+    if (form) {
+      loadLiveForForm(form);
+    }
+  }, [form]);
+
+  /* ─── Fetch items for a single form (normal or Sign) ─── */
+  const loadLiveForForm = async f => {
+    setLoading(true);
+    let items = [];
+
+    if (f.isSign) {
+      // Fetch signed docs for this single Sign form
+      try {
+        const { data } = await axios.get(`/api/signDocs?formId=${f.id}`);
+        items = data.map(doc => ({
+          id: doc.id,
+          form_id: f.id,
+          form_title: f.title,
+          isSign: true,
+          created_at: doc.signers?.[0]?.signed_at || doc.created_at,
+          answers: {
+            signer: { text:'Signer', answer: doc.signers?.[0]?.name || '—' },
+            pdf:    { text:'Signed PDF', answer: doc.download_url }
+          }
+        }));
+      } catch (e) {
+        console.error('Error loading Sign docs for single form', f.id, e);
+      }
+    } else {
+      // Fetch normal submissions for this single form
+      try {
+        const { data } = await axios.get(`/api/submissions?id=${f.id}`);
+        items = (data.content || []).map(s => ({ ...s, isSign: false }));
+      } catch {
+        items = [];
+      }
+    }
+
+    // Sort and filter by tags if needed
+    items.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const visible = items.filter(s => {
+      if (filterTags.length === 0) return true;
+      const fTags = tagMap[s.form_id] || [];
+      return fTags.some(t => filterTags.includes(t));
+    });
+
+    setSubs(visible.slice(0, 20));
+    setLoading(false);
+  };
+
+  /* ─── Helpers to render each row ─── */
+  const pickName = sub => {
+    if (sub.isSign) {
+      // “Signer” field for a Sign doc
+      return sub.answers.signer.answer || '—';
+    }
+    // Normal submission: find name/email/first short answer
+    return pickNameForForm(sub);
+  };
+
+  const getTitle = sub => {
+    return sub.form_title || sub.form_id;
   };
 
   /* ─── Render UI ─── */
   return (
     <Stack spacing={2} sx={{ p: 3, alignItems: 'center' }}>
-      {/* Header with “Live Submissions” and Refresh icon */}
+      {/* Header + Refresh */}
       <Stack direction="row" spacing={1} alignItems="center">
         <Typography variant="h5">Live Submissions</Typography>
-        <ManualRefresh onClick={fetchSubs} loading={loading} />
+        <ManualRefresh onClick={form ? () => loadLiveForForm(form) : loadLive} loading={loading} />
       </Stack>
 
-      {/* Form filter */}
+      {/* Form dropdown: choose one form or “All” */}
       <FormPicker onSelect={setForm} />
 
       {/* Tag filter bar */}
       <TagFilterBar
-        allTags={[...new Set(Object.values(tagMap).flat())]} 
-        active={filterTags} 
-        setActive={setFilterTags} 
+        allTags={[...new Set(Object.values(tagMap).flat())]}
+        active={filterTags}
+        setActive={setFilterTags}
       />
 
-      {/* Scrollable list of filtered submissions */}
+      {/* Scrollable list */}
       <Paper
         sx={{
           maxHeight: '70vh',
@@ -130,18 +251,29 @@ export default function Live() {
           boxShadow: 3
         }}
       >
-        {filteredSubs.map(s => (
+        {subs.map(s => (
           <Typography key={s.id} sx={{ mb: 1 }}>
-            <strong>{getTitle(s)}</strong> – {pickName(s)} –{' '}
+            <strong>
+              {s.isSign && '[SIGNED] '}
+              {getTitle(s)}
+            </strong>
+            {' '}– {pickName(s)} –{' '}
             {new Date(s.created_at).toLocaleString()}{' '}
             <a
-              href={`https://www.jotform.com/inbox/${s.form_id}?submissionId=${s.id}`}
+              href={
+                s.isSign
+                  ? `https://api.jotform.com/sign/${s.form_id}/documents/${s.id}/download?apiKey=${process.env.JOTFORM_API_KEY}`
+                  : `https://www.jotform.com/inbox/${s.form_id}?submissionId=${s.id}`
+              }
               target="_blank"
               rel="noreferrer"
             >
-              Inbox ↗
-            </a>{' '}
-            <PDFButton url={s.answers?.pdf?.download_url} name={s.id} />
+              {s.isSign ? 'Download PDF ↗' : 'Inbox ↗'}
+            </a>
+            {' '}
+            {!s.isSign && (
+              <PDFButton url={s.answers?.pdf?.download_url} name={s.id} />
+            )}
           </Typography>
         ))}
       </Paper>
