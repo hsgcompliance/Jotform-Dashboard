@@ -1,5 +1,5 @@
 // components/FormSidebar.js
-import { useState } from 'react';
+import React from 'react';
 import { IconButton, Chip } from '@mui/material';
 import EditIcon from '@mui/icons-material/Edit';
 
@@ -9,8 +9,8 @@ export default function FormSidebar({
   onSelect,
   search,
   setSearch,
-  tags = {},        // map: { [formId]: [ 'TAG1', 'TAG2', … ] }
-  onEditTags
+  tags = {},         // { [formId]: [ 'TAG1', 'TAG2', ... ] }
+  onEditTags         // function(form) → opens tag dialog
 }) {
   return (
     <div
@@ -22,6 +22,7 @@ export default function FormSidebar({
         overflowY: 'auto'
       }}
     >
+      {/* Search input */}
       <input
         style={{
           width: '100%',
@@ -35,20 +36,26 @@ export default function FormSidebar({
         onChange={e => setSearch(e.target.value)}
       />
 
+      {/* Form cards */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {forms.map(f => {
           const fTags = tags[f.id] || [];
+          // Determine background for selected vs. unselected
+          const isSelected = selected?.id === f.id;
           return (
             <div
               key={f.id}
               style={{
+                position: 'relative',            // allow absolutely positioned children if needed
                 border: '1px solid #ddd',
                 borderRadius: 6,
                 padding: 8,
-                background: selected?.id === f.id ? '#e0f0ff' : '#fff',
+                background: isSelected ? '#e0f0ff' : '#fff',
+                cursor: 'pointer'
               }}
+              onClick={() => onSelect(f)}      // select this form when box is clicked
             >
-              {/* Title + Edit Icon */}
+              {/* Title row + Edit button */}
               <div
                 style={{
                   display: 'flex',
@@ -57,43 +64,46 @@ export default function FormSidebar({
                 }}
               >
                 <span style={{ fontWeight: 500, fontSize: 14 }}>{f.title}</span>
-                <IconButton size="small" onClick={() => onEditTags(f)}>
+                <IconButton
+                  size="small"
+                  onClick={e => {
+                    e.stopPropagation();         // prevent parent onClick
+                    onEditTags(f);
+                  }}
+                >
                   <EditIcon fontSize="inherit" />
                 </IconButton>
               </div>
 
-              {/* Stats: count + last submission */}
+              {/* Stats: submission count · last submission date */}
               <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>
-                {f.count || 0} submissions ‒ {f.lastSubmission?.slice(0, 10) || '—'}
+                {f.count || 0} submissions &bull;{' '}
+                {f.lastSubmission?.slice(0, 10) || '—'}
               </div>
 
               {/* Tags (stacked vertically) */}
               {fTags.length > 0 && (
-                <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div
+                  style={{
+                    marginTop: 6,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4
+                  }}
+                >
                   {fTags.map(tag => (
                     <Chip
                       key={tag}
                       label={tag.toUpperCase()}
                       size="small"
-                      sx={{ fontSize: 10, textTransform: 'uppercase' }}
+                      sx={{
+                        fontSize: 10,
+                        textTransform: 'uppercase'
+                      }}
                     />
                   ))}
                 </div>
               )}
-
-              {/* Clickable overlay button (fills the entire box) */}
-              <button
-                onClick={() => onSelect(f)}
-                style={{
-                  position: 'absolute',
-                  top: 0,
-                  left: 0,
-                  width: '100%',
-                  height: '100%',
-                  opacity: 0,
-                  cursor: 'pointer'
-                }}
-              />
             </div>
           );
         })}
