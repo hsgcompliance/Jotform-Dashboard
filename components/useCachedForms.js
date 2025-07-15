@@ -1,3 +1,5 @@
+// components/useCachedForms.js
+// This hook caches JotForm forms in localStorage for offline use
 import { useEffect, useState } from 'react';
 import { Stack, Typography } from '@mui/material';
 import axios from 'axios';

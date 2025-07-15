@@ -1,3 +1,5 @@
+// pages/api/forms.js
+// Returns all JotForm forms that have at least one submission
 import axios from 'axios';
 
 /**

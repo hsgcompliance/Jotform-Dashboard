@@ -27,7 +27,7 @@ export default function Dashboard() {
   );
 
   /* ─── Forms (combined normal + Sign) ─── */
-  const [allForms, reloadForms] = useAllForms();
+  const [allForms, reloadAll] = useAllForms();
 
   /* ─── Tag state ─── */
   const [rawTagMap, setRawTagMap] = useFormTags(); // user-defined tags
@@ -140,7 +140,7 @@ export default function Dashboard() {
         gap:20
       }}>
         <h1 style={{ margin:0 }}>JotForm Dashboard</h1>
-        <ManualRefresh onClick={reloadForms} title="Reload forms" />
+        <ManualRefresh onClick={reloadAll} title="Reload forms" />
       </header>
 
       {/* Tag Filter Bar */}
