@@ -52,11 +52,15 @@ export default function Dashboard() {
   const [selSub,       setSelSub]       = useState(null);
   const [searchForms,  setSearchForms]  = useState('');
   const [searchSubs,   setSearchSubs]   = useState('');
+  const [loadingSubs, setLoadingSubs] = useState(false);
 
   /* ─── Get regular submissions (with caching) ─── */
   const loadSubs = formId => {
+    setLoadingSubs(true);
+
     if (subsCache[formId]) {
       setSubs(subsCache[formId]);
+      setLoadingSubs(false);
       return;
     }
     const hit = rLS(`subs_${formId}`);
@@ -64,16 +68,35 @@ export default function Dashboard() {
       const p = JSON.parse(hit);
       setSubs(p);
       setSubsCache(prev => ({ ...prev, [formId]: p }));
+      setLoadingSubs(false);
       return;
     }
-    axios.get(`/api/submissions?id=${formId}`).then(r => {
-      const list = r.data.content || [];
-      setSubs(list);
-      setSubsCache(prev => ({ ...prev, [formId]: list }));
-      wLS(`subs_${formId}`, JSON.stringify(list));
+
+    axios.get(`/api/submissions?id=${formId}`)
+      .then(r => {
+        const list = r.data.content || [];
+        setSubs(list);
+        setSubsCache(prev => ({ ...prev, [formId]: list }));
+        wLS(`subs_${formId}`, JSON.stringify(list));
+      })
+      .catch(console.error)
+      .finally(() => {
+        setLoadingSubs(false);
     });
-  };
+};
+
   
+  const reloadSubs = formId => {
+    // clear in‑memory cache
+    setSubsCache(prev => ({ ...prev, [formId]: undefined }));
+    // clear localStorage cache
+    if (typeof window !== 'undefined') {
+      localStorage.removeItem(`subs_${formId}`);
+    }
+    // re‑load from the API
+    loadSubs(formId);
+  };
+
   /* ─── Get Sign submissions (signed documents) ─── */
   const loadSignDocs = async formId => {
     setSubs([]); // clear out any old entries
@@ -186,12 +209,18 @@ export default function Dashboard() {
                     rel="noreferrer"
                   >Open ↗</a>
                 </div>
+                
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  margin: '12px 0'
+                }}>
 
                 <input
                   style={{
-                    width:'100%',
+                    flex: 1,
                     padding:4,
-                    margin:'12px 0',
                     border:'1px solid #ccc',
                     borderRadius:4
                   }}
@@ -199,6 +228,12 @@ export default function Dashboard() {
                   value={searchSubs}
                   onChange={e => setSearchSubs(e.target.value)}
                 />
+                <ManualRefresh
+                    onClick={() => reloadSubs(selectedForm.id)}
+                    loading={loadingSubs}
+                    title="Reload submissions"
+                  />
+                </div>
 
                 <SubList
                   subs={filteredSubs}
