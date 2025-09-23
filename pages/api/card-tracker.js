@@ -1,5 +1,5 @@
 // pages/api/card-tracker.js
-// Pulls submissions for a given form id and returns normalized rows
+// Returns flattened line-items for a credit-card form
 import axios from "axios";
 import { normalizeSubmission } from "../../components/jotformMap";
 
@@ -13,8 +13,6 @@ export default async function handler(req, res) {
     let offset = 0;
     const all = [];
 
-    // paginate identical to /api/submissions
-    /* eslint-disable no-constant-condition */
     while (true) {
       const { data } = await axios.get(
         `https://api.jotform.com/form/${formId}/submissions`,
@@ -26,8 +24,14 @@ export default async function handler(req, res) {
       offset += limit;
     }
 
-    const normalized = all.map(normalizeSubmission);
-    res.status(200).json({ submissions: normalized });
+    // Flatten each submission into 0–5 line items
+    const items = [];
+    for (const sub of all) {
+      const rows = normalizeSubmission(sub);
+      items.push(...rows);
+    }
+
+    res.status(200).json({ items });
   } catch (e) {
     res.status(500).json({ error: String(e?.message || e) });
   }

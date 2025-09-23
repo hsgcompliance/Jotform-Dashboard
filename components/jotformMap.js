@@ -1,5 +1,5 @@
 // components/jotformMap.js
-// Normalize one Jotform submission → { id, createdAt, merchant, expenseType, card, amount, raw }
+// Normalize a Jotform submission into line-items (one per transaction)
 
 const asNumber = (val) => {
   if (val == null) return undefined;
@@ -18,63 +18,103 @@ const pick = (obj, labels) => {
   }
 };
 
-export function normalizeSubmission(sub) {
-  // Build a label → answer map, using the friendliest properties first
+// Build label and id maps for easy lookups
+function buildMaps(sub) {
   const answers = sub?.answers || {};
   const byLabel = {};
+  const byId = {};
   for (const qid of Object.keys(answers)) {
     const a = answers[qid];
+    byId[qid] = a;
     const label = (a?.label || a?.text || a?.name || "").trim();
-    // prefer prettyFormat, then answer, then value
     const rawAns = a?.prettyFormat ?? a?.answer ?? a?.value ?? "";
     if (label) byLabel[label] = rawAns;
   }
+  return { byLabel, byId };
+}
 
-  // Heuristics based on your PDF/CSV descriptions
-  const card = pick(byLabel, [
-    "Card charged",
-    "Card being returned",
-    "CREDIT CARD CHECKOUT SUMMARY Card charged",
-  ]);
+// Return array of line items for this submission
+export function normalizeSubmission(sub) {
+  const { byLabel, byId } = buildMaps(sub);
 
-  const merchant = pick(byLabel, [
+  // Card — prefer explicit radio (33), fallback to summary text
+  const cardLabel =
+    byId?.["33"]?.answer ||
+    pick(byLabel, [
+      "Card charged",
+      "Card being returned",
+      "CREDIT CARD CHECKOUT SUMMARY Card charged",
+    ]) ||
+    "";
+
+  // Top-of-form “Transaction 1” fields also exist as plain Merchant/Expense/Cost
+  const fallbackMerchant = pick(byLabel, [
     "Merchant",
     "Vendor",
     "What was purchased?",
     "Description",
   ]);
-
-  const expenseType = pick(byLabel, [
+  const fallbackExpense = pick(byLabel, [
     "Expense Type",
     "Category",
     "Account / Category",
   ]);
 
-  // Amount (try multiple labels; fallback to parsing any numeric)
-  let amount =
-    asNumber(pick(byLabel, ["Amount", "Total", "Charge amount", "Total Amount"])) ??
-    0;
-
-  // Timestamp: prefer JF created_at; otherwise now
   const createdAt = sub?.created_at || new Date().toISOString();
 
-  return {
-    id: sub?.id || sub?.submission_id,
-    createdAt,
-    merchant: String(merchant || "").trim(),
-    expenseType: String(expenseType || "").trim(),
-    card: String(card || "").trim(), // e.g., "Info-Only Card: Housing (B-4079)"
-    amount,
-    raw: sub,
-  };
+  // Known slots from your schema (IDs from your sample payload)
+  // t1: Merchant(82)  Expense(84)  Cost(86)
+  // t2: Merchant(182) Expense(183) Cost(107)
+  // t3: Merchant(187) Expense(188) Cost(115)
+  // t4: Merchant(192) Expense(193) Cost(123)
+  // t5: Merchant(197) Expense(198) Cost(131)
+  const slots = [
+    { m: "82",  e: "84",  c: "86"  },
+    { m: "182", e: "183", c: "107" },
+    { m: "187", e: "188", c: "115" },
+    { m: "192", e: "193", c: "123" },
+    { m: "197", e: "198", c: "131" },
+  ];
+
+  const items = [];
+  for (const s of slots) {
+    const m = byId?.[s.m]?.answer ?? (s.m === "82" ? fallbackMerchant : "");
+    const e = byId?.[s.e]?.answer ?? (s.e === "84" ? fallbackExpense : "");
+    const c = asNumber(byId?.[s.c]?.answer);
+    if (c != null && !Number.isNaN(c)) {
+      items.push({
+        id: sub?.id || sub?.submission_id,
+        createdAt,
+        merchant: String(m || "").trim(),
+        expenseType: String(e || "").trim(),
+        card: String(cardLabel || "").trim(),
+        amount: c,
+        raw: sub,
+      });
+    }
+  }
+
+  // If nothing matched, emit a single zero row so the submission is still visible (optional)
+  if (items.length === 0) {
+    items.push({
+      id: sub?.id || sub?.submission_id,
+      createdAt,
+      merchant: String(fallbackMerchant || "").trim(),
+      expenseType: String(fallbackExpense || "").trim(),
+      card: String(cardLabel || "").trim(),
+      amount: 0,
+      raw: sub,
+    });
+  }
+
+  return items;
 }
 
-// Bucket the card to {Housing|Youth} with conservative defaults
+// Collapse a card label down to "Housing" or "Youth"
 export function bucketCard(cardLabel) {
   const s = (cardLabel || "").toLowerCase();
   if (s.includes("youth")) return "Youth";
   if (s.includes("housing")) return "Housing";
-  // fallback: treat unknowns as Housing unless you want a separate "Unknown"
   return "Housing";
 }
 
