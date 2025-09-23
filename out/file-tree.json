@@ -1,0 +1,196 @@
+{
+  "name": "next-dashboard-starter",
+  "path": ".",
+  "type": "dir",
+  "children": [
+    {
+      "name": ".env.local",
+      "path": ".env.local",
+      "type": "file"
+    },
+    {
+      "name": ".gitignore",
+      "path": ".gitignore",
+      "type": "file"
+    },
+    {
+      "name": "components",
+      "path": "components",
+      "type": "dir",
+      "children": [
+        {
+          "name": "AnswerTable.js",
+          "path": "components\\AnswerTable.js",
+          "type": "file"
+        },
+        {
+          "name": "ErrorBoundary.js",
+          "path": "components\\ErrorBoundary.js",
+          "type": "file"
+        },
+        {
+          "name": "FormPicker.js",
+          "path": "components\\FormPicker.js",
+          "type": "file"
+        },
+        {
+          "name": "FormSidebar.js",
+          "path": "components\\FormSidebar.js",
+          "type": "file"
+        },
+        {
+          "name": "FormTagPicker.js",
+          "path": "components\\FormTagPicker.js",
+          "type": "file"
+        },
+        {
+          "name": "Gate.js",
+          "path": "components\\Gate.js",
+          "type": "file"
+        },
+        {
+          "name": "ManualRefresh.js",
+          "path": "components\\ManualRefresh.js",
+          "type": "file"
+        },
+        {
+          "name": "Nav.js",
+          "path": "components\\Nav.js",
+          "type": "file"
+        },
+        {
+          "name": "PDFButton.js",
+          "path": "components\\PDFButton.js",
+          "type": "file"
+        },
+        {
+          "name": "SubList.js",
+          "path": "components\\SubList.js",
+          "type": "file"
+        },
+        {
+          "name": "TagFilterBar.js",
+          "path": "components\\TagFilterBar.js",
+          "type": "file"
+        },
+        {
+          "name": "useAllForms.js",
+          "path": "components\\useAllForms.js",
+          "type": "file"
+        },
+        {
+          "name": "useCachedForms.js",
+          "path": "components\\useCachedForms.js",
+          "type": "file"
+        },
+        {
+          "name": "useFormTags.js",
+          "path": "components\\useFormTags.js",
+          "type": "file"
+        }
+      ]
+    },
+    {
+      "name": "fileTree.mjs",
+      "path": "fileTree.mjs",
+      "type": "file"
+    },
+    {
+      "name": "package.json",
+      "path": "package.json",
+      "type": "file"
+    },
+    {
+      "name": "pages",
+      "path": "pages",
+      "type": "dir",
+      "children": [
+        {
+          "name": "api",
+          "path": "pages\\api",
+          "type": "dir",
+          "children": [
+            {
+              "name": "auth",
+              "path": "pages\\api\\auth",
+              "type": "dir",
+              "children": [
+                {
+                  "name": "[...nextauth].js",
+                  "path": "pages\\api\\auth\\[...nextauth].js",
+                  "type": "file"
+                }
+              ]
+            },
+            {
+              "name": "clone.js",
+              "path": "pages\\api\\clone.js",
+              "type": "file"
+            },
+            {
+              "name": "forms.js",
+              "path": "pages\\api\\forms.js",
+              "type": "file"
+            },
+            {
+              "name": "latest.js",
+              "path": "pages\\api\\latest.js",
+              "type": "file"
+            },
+            {
+              "name": "signDocs.js",
+              "path": "pages\\api\\signDocs.js",
+              "type": "file"
+            },
+            {
+              "name": "signForms.js",
+              "path": "pages\\api\\signForms.js",
+              "type": "file"
+            },
+            {
+              "name": "submissions.js",
+              "path": "pages\\api\\submissions.js",
+              "type": "file"
+            },
+            {
+              "name": "webhooks.js",
+              "path": "pages\\api\\webhooks.js",
+              "type": "file"
+            }
+          ]
+        },
+        {
+          "name": "builder.js",
+          "path": "pages\\builder.js",
+          "type": "file"
+        },
+        {
+          "name": "form",
+          "path": "pages\\form",
+          "type": "dir",
+          "children": []
+        },
+        {
+          "name": "index.js",
+          "path": "pages\\index.js",
+          "type": "file"
+        },
+        {
+          "name": "live.js",
+          "path": "pages\\live.js",
+          "type": "file"
+        },
+        {
+          "name": "webhooks.js",
+          "path": "pages\\webhooks.js",
+          "type": "file"
+        },
+        {
+          "name": "_app.js",
+          "path": "pages\\_app.js",
+          "type": "file"
+        }
+      ]
+    }
+  ]
+}

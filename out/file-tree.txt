@@ -1,0 +1,38 @@
+next-dashboard-starter/
+├─ components/
+│  ├─ AnswerTable.js
+│  ├─ ErrorBoundary.js
+│  ├─ FormPicker.js
+│  ├─ FormSidebar.js
+│  ├─ FormTagPicker.js
+│  ├─ Gate.js
+│  ├─ ManualRefresh.js
+│  ├─ Nav.js
+│  ├─ PDFButton.js
+│  ├─ SubList.js
+│  ├─ TagFilterBar.js
+│  ├─ useAllForms.js
+│  ├─ useCachedForms.js
+│  └─ useFormTags.js
+├─ pages/
+│  ├─ api/
+│  │  ├─ auth/
+│  │  │  └─ [...nextauth].js
+│  │  ├─ clone.js
+│  │  ├─ forms.js
+│  │  ├─ latest.js
+│  │  ├─ signDocs.js
+│  │  ├─ signForms.js
+│  │  ├─ submissions.js
+│  │  └─ webhooks.js
+│  ├─ form/
+
+│  ├─ _app.js
+│  ├─ builder.js
+│  ├─ index.js
+│  ├─ live.js
+│  └─ webhooks.js
+├─ .env.local
+├─ .gitignore
+├─ fileTree.mjs
+└─ package.json
