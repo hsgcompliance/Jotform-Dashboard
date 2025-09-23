@@ -5,24 +5,35 @@ import { bucketCard, monthKey } from "../components/jotformMap";
 
 const fetcher = (u) => fetch(u).then((r) => r.json());
 
-// Limits stored locally (per user)
+// Limits stored locally (per user) — SSR safe
 function useCardLimits() {
-  const [limits, setLimits] = React.useState(() => {
-    try { return JSON.parse(localStorage.getItem("cc-limits") || "{}"); }
-    catch { return {}; }
-  });
+  const [limits, setLimits] = React.useState({});
+  // hydrate on client
   React.useEffect(() => {
-    if (!localStorage.getItem("cc-limits")) {
-      const init = { Housing: 5000, Youth: 3000 };
-      localStorage.setItem("cc-limits", JSON.stringify(init));
-      setLimits(init);
+    try {
+      const raw = typeof window !== "undefined" ? localStorage.getItem("cc-limits") : null;
+      if (raw) {
+        setLimits(JSON.parse(raw));
+      } else {
+        const init = { Housing: 5000, Youth: 3000 };
+        if (typeof window !== "undefined") {
+          localStorage.setItem("cc-limits", JSON.stringify(init));
+        }
+        setLimits(init);
+      }
+    } catch {
+      // ignore
     }
   }, []);
   const set = (k, v) => {
     const n = Number(v);
-    const next = { ...limits, [k]: Number.isFinite(n) ? n : 0 };
-    localStorage.setItem("cc-limits", JSON.stringify(next));
-    setLimits(next);
+    setLimits((prev) => {
+      const next = { ...prev, [k]: Number.isFinite(n) ? n : 0 };
+      if (typeof window !== "undefined") {
+        localStorage.setItem("cc-limits", JSON.stringify(next));
+      }
+      return next;
+    });
   };
   return [limits, set];
 }
