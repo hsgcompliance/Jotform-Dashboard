@@ -2,6 +2,7 @@
 import React from "react";
 import useSWR from "swr";
 import { bucketCard, monthKey } from "../components/jotformMap";
+import PDFButton from "../components/PDFButton";
 import {
   Dialog,
   DialogTitle,
@@ -58,98 +59,160 @@ function withinRange(iso, from, to) {
   return true;
 }
 
-// ---------- Cleaned detail renderer (strip HTML/empty/static) ----------
 function stripHtml(s = "") {
   return String(s).replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
 }
-function isEmptyValue(v) {
-  if (v == null) return true;
-  if (typeof v === "string") return v.trim() === "" || v.trim() === "—";
-  if (Array.isArray(v)) return v.length === 0;
-  if (typeof v === "object") return Object.keys(v).length === 0;
-  return false;
-}
-const STATIC_TYPES = new Set([
-  "control_head",
-  "control_text",
-  "control_divider",
-  "control_collapse",
-  "control_button",
-]);
-function CleanSubmissionView({ answers = {}, subId }) {
-  // turn answers obj into filtered list
-  const entries = Object.values(answers)
-    .filter((a) => a && !STATIC_TYPES.has(a.type))
-    .map((a) => {
-      let val = a.answer ?? a.prettyFormat ?? a.value ?? "";
-      // file uploads: ensure array of links
-      if (a.type === "control_fileupload") {
-        const arr = Array.isArray(val) ? val : val ? [val] : [];
-        return { label: a.text || a.name, value: arr };
-      }
-      if (typeof val === "string") {
-        val = stripHtml(val);
-      } else if (typeof val === "object" && !Array.isArray(val)) {
-        // compact object answers (e.g., datetime parts) into key: value lines
-        const compact = Object.entries(val)
-          .filter(([, v]) => v != null && String(v).trim() !== "")
-          .map(([k, v]) => `${k}: ${v}`)
-          .join(" · ");
-        val = compact;
-      }
-      return { label: a.text || a.name, value: val };
-    })
-    .filter((e) => !isEmptyValue(e.value));
 
-  if (entries.length === 0) {
-    return <div style={{ fontSize: 13, opacity: 0.7 }}>No non-empty fields.</div>;
-  }
+/* ---------------- Structured, cleaned submission view ---------------- */
+function StructuredSubmissionView({ answers = {}, subId }) {
+  // index by id for direct lookups
+  const byId = answers || {};
 
-  // group into blocks of ~6 rows for readability
-  const blocks = [];
-  for (let i = 0; i < entries.length; i += 6) blocks.push(entries.slice(i, i + 6));
+  // helpers
+  const ans = (id) => byId?.[id]?.answer ?? byId?.[id]?.prettyFormat ?? "";
+  const text = (id) => byId?.[id]?.text || byId?.[id]?.label || byId?.[id]?.name || "";
+
+  const nonEmpty = (v) => {
+    if (v == null) return false;
+    if (typeof v === "string") return v.trim() !== "";
+    if (Array.isArray(v)) return v.length > 0;
+    if (typeof v === "object") return Object.keys(v).length > 0;
+    return true;
+  };
+
+  // ---- Header summary (no junk HTML) ----
+  const card = ans("33"); // Card being returned
+  const purchaser = ans("55") || ans("185"); // try "Name" then t2 customer fallback
+  const email = ans("56") || ""; // Email address
+  const whatPurchased = ans("85") || ans("167"); // Purpose or "What was purchased?"
+  const returnTime = byId?.["28"]?.prettyFormat || ""; // Return date & time (pretty)
+  // restore "Card Checkout Summary" as clean text
+  const summaryLines = [
+    purchaser ? `Purchaser: ${purchaser}` : "",
+    card ? `Card charged: ${card}` : "",
+    whatPurchased ? `What was purchased?: ${whatPurchased}` : "",
+    returnTime ? `Card return time: ${returnTime}` : "",
+  ].filter(Boolean);
+
+  // ---- Transaction slot maps (from your schema) ----
+  const slots = [
+    { n: 1, m: "82",  p: "85",  e: "84",  sup: "169", cust: "156", cost: "86",  files: "70",  notes: "151" },
+    { n: 2, m: "182", p: "106", e: "183", sup: "184", cust: "185", cost: "107", files: "109", notes: "143" /* or 145 near t2 */ },
+    { n: 3, m: "187", p: "114", e: "188", sup: "189", cust: "190", cost: "115", files: "117", notes: "147" },
+    { n: 4, m: "192", p: "122", e: "193", sup: "194", cust: "195", cost: "123", files: "125", notes: "—" },
+    { n: 5, m: "197", p: "130", e: "198", sup: "199", cust: "200", cost: "131", files: "133", notes: "—" },
+  ];
+
+  // Build transaction sections in preferred order:
+  // Header (Transaction N) → Merchant → Purpose → Expense Type → Supportive Services → Customer → Cost → Files → Notes
+  const sections = slots.map((s) => {
+    const merchant = ans(s.m);
+    const purpose = ans(s.p);
+    const expenseType = ans(s.e);
+    const supportive = ans(s.sup);
+    const customer = ans(s.cust);
+    const cost = ans(s.cost);
+    const fileAns = ans(s.files);
+    const files = Array.isArray(fileAns) ? fileAns : fileAns ? [fileAns] : [];
+    const notes = s.notes !== "—" ? ans(s.notes) : "";
+
+    const rows = [
+      { label: "Merchant", value: merchant },
+      { label: "Purpose", value: purpose },
+      { label: "Expense Type", value: expenseType },
+      { label: "Supportive Services Program", value: supportive },
+      { label: "Customer Name", value: customer },
+      { label: "Cost", value: cost },
+      { label: "Files", value: files },
+      { label: "Notes", value: notes },
+    ].filter((r) => nonEmpty(r.value));
+
+    // only show the section if it has meaningful content (esp. cost)
+    const hasCost = nonEmpty(cost);
+    const hasAny = rows.length > 0;
+    return { n: s.n, rows, show: hasAny && hasCost };
+  });
+
+  // filter out static/HTML guidance blocks (e.g., 90) by simply not including
+  const hasAnySection = sections.some((sec) => sec.show);
 
   return (
-    <div style={{ display: "grid", gap: 12 }}>
-      {blocks.map((block, bi) => (
-        <div
-          key={bi}
-          style={{
-            border: "1px solid #eee",
-            borderRadius: 8,
-            padding: 12,
-            background: "#fafafa",
-          }}
-        >
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
-            <tbody>
-              {block.map((e, i) => (
-                <tr key={i}>
-                  <td style={{ width: 220, padding: "6px 8px", fontWeight: 600, verticalAlign: "top" }}>
-                    {e.label}
-                  </td>
-                  <td style={{ padding: "6px 8px" }}>
-                    {Array.isArray(e.value)
-                      ? e.value.map((u, idx) => (
-                          <div key={idx} style={{ marginBottom: 4 }}>
-                            <a href={u} target="_blank" rel="noreferrer">
-                              {u.split("/").pop()}
-                            </a>
-                          </div>
-                        ))
-                      : e.value}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
+    <div style={{ display: "grid", gap: 14 }}>
+      {/* Header block */}
+      <div
+        style={{
+          border: "1px solid #eee",
+          borderRadius: 10,
+          padding: 12,
+          background: "#f9fbff",
+        }}
+      >
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>Card Checkout Summary</div>
+        {summaryLines.length ? (
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            {summaryLines.map((l, i) => (
+              <li key={i} style={{ fontSize: 13 }}>{stripHtml(l)}</li>
+            ))}
+          </ul>
+        ) : (
+          <div style={{ fontSize: 13, opacity: 0.7 }}>No summary provided.</div>
+        )}
+        {email ? (
+          <div style={{ marginTop: 6, fontSize: 13 }}>
+            <b>Email:</b> {email}
+          </div>
+        ) : null}
+      </div>
+
+      {/* Transactions */}
+      {hasAnySection ? (
+        sections
+          .filter((sec) => sec.show)
+          .map((sec) => (
+            <div
+              key={sec.n}
+              style={{
+                border: "1px solid #eee",
+                borderRadius: 10,
+                padding: 12,
+                background: "#fff",
+              }}
+            >
+              <div style={{ fontWeight: 700, marginBottom: 8 }}>{`Transaction ${sec.n}`}</div>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <tbody>
+                  {sec.rows.map((r, idx) => (
+                    <tr key={idx}>
+                      <td style={{ width: 220, padding: "6px 8px", fontWeight: 600, verticalAlign: "top" }}>
+                        {r.label}
+                      </td>
+                      <td style={{ padding: "6px 8px" }}>
+                        {Array.isArray(r.value)
+                          ? r.value.map((u, i) => (
+                              <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                                <span>{u.split("/").pop()}</span>
+                                {/* Save button uses your PDFButton for any file URL */}
+                                <PDFButton url={u} name={`${subId}-t${sec.n}-${i}`} />
+                              </div>
+                            ))
+                          : r.label === "Cost"
+                          ? `$${Number(r.value).toFixed(2)}`
+                          : String(r.value)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ))
+      ) : (
+        <div style={{ fontSize: 13, opacity: 0.7 }}>No transactions found.</div>
+      )}
     </div>
   );
 }
 
-// ---------- Monthly table (large, centered, clean colors) ----------
+/* ---------------- Monthly table (large, centered, clean colors) ---------------- */
 function MonthlyTable({ title, data, limit, accent }) {
   return (
     <div
@@ -205,6 +268,7 @@ function MonthlyTable({ title, data, limit, accent }) {
   );
 }
 
+/* ---------------- Main Page ---------------- */
 export default function CreditCards() {
   const [showRaw, setShowRaw] = React.useState(false);
   const [limits, setLimit] = useCardLimits();
@@ -321,11 +385,9 @@ export default function CreditCards() {
 
       {error && <p style={{ color: "crimson" }}>Error: {String(error)}</p>}
       {isLoading && <p>Loading…</p>}
-      {!isLoading && showRaw && (
-        <pre style={pre}>{JSON.stringify(rows, null, 2)}</pre>
-      )}
+      {!isLoading && showRaw && <pre style={pre}>{JSON.stringify(rows, null, 2)}</pre>}
 
-      {/* Line items + Filters (moved here, under monthly spend) */}
+      {/* Line items + Filters (below monthly spend) */}
       {!isLoading && !showRaw && (
         <section style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, background: "#fff" }}>
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 8 }}>
@@ -365,7 +427,7 @@ export default function CreditCards() {
           </div>
 
           <div style={{ overflowX: "auto" }}>
-            <table style={{ minWidth: 1000, borderCollapse: "collapse" }}>
+            <table style={{ minWidth: 1100, borderCollapse: "collapse" }}>
               <thead style={{ background: "#f7f7f7" }}>
                 <tr>
                   <th style={th}>Date</th>
@@ -386,13 +448,7 @@ export default function CreditCards() {
                     <td style={td} title={r.cardLabel}>{r.card}</td>
                     <td style={td}>{r.merchant}</td>
                     <td style={td}>{r.expenseType}</td>
-                    <td style={td}>
-                      {r.email ? (
-                        <a href={`mailto:${r.email}`}>{r.email}</a>
-                      ) : (
-                        <span style={{ opacity: 0.6 }}>—</span>
-                      )}
-                    </td>
+                    <td style={td}>{r.email || "—"}</td>
                     <td style={td}>${r.amount.toFixed(2)}</td>
                     <td style={td}>
                       <Button size="small" variant="outlined" onClick={() => setDetail(r)}>
@@ -407,7 +463,7 @@ export default function CreditCards() {
         </section>
       )}
 
-      {/* Details dialog (cleaned view) */}
+      {/* Details dialog (structured, cleaned) */}
       <Dialog open={!!detail} onClose={() => setDetail(null)} maxWidth="md" fullWidth>
         <DialogTitle sx={{ pr: 5 }}>
           Submission {detail?.baseId}
@@ -429,7 +485,7 @@ export default function CreditCards() {
                 <b>Amount: </b>${detail.amount.toFixed(2)} &nbsp; | &nbsp;
                 <b>Email: </b>{detail.email || "—"}
               </div>
-              <CleanSubmissionView answers={detail.raw?.answers || {}} subId={detail.baseId} />
+              <StructuredSubmissionView answers={detail.raw?.answers || {}} subId={detail.baseId} />
             </div>
           )}
         </DialogContent>
@@ -438,6 +494,7 @@ export default function CreditCards() {
   );
 }
 
+/* ---------------- Styles ---------------- */
 const th = { textAlign: "left", padding: "8px 10px", borderBottom: "1px solid #ddd", fontWeight: 600 };
 const td = { padding: "8px 10px", borderBottom: "1px solid #eee", fontSize: 13, verticalAlign: "top" };
 
