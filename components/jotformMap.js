@@ -47,6 +47,12 @@ export function normalizeSubmission(sub) {
     ]) ||
     "";
 
+  // Email (id 56 in your schema)
+  const email =
+    byId?.["56"]?.answer ||
+    pick(byLabel, ["Email", "Email address", "email"]) ||
+    "";
+
   // Top-of-form “Transaction 1” fields also exist as plain Merchant/Expense/Cost
   const fallbackMerchant = pick(byLabel, [
     "Merchant",
@@ -88,6 +94,7 @@ export function normalizeSubmission(sub) {
         merchant: String(m || "").trim(),
         expenseType: String(e || "").trim(),
         card: String(cardLabel || "").trim(),
+        email: String(email || "").trim(),
         amount: c,
         raw: sub,
       });
@@ -102,6 +109,7 @@ export function normalizeSubmission(sub) {
       merchant: String(fallbackMerchant || "").trim(),
       expenseType: String(fallbackExpense || "").trim(),
       card: String(cardLabel || "").trim(),
+      email: String(email || "").trim(),
       amount: 0,
       raw: sub,
     });
