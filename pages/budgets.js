@@ -76,17 +76,62 @@ const defaultCfg = {
 
 function useConfig() {
   const [cfg, setCfg] = React.useState(defaultCfg);
+  const [loadingCfg, setLoadingCfg] = React.useState(true);
+  const [cfgErr, setCfgErr] = React.useState(null);
+
+  // load from blob (fallback to localStorage or defaults)
   React.useEffect(() => {
-    try {
-      const raw = localStorage.getItem("budgets-v2");
-      if (raw) setCfg(JSON.parse(raw));
-    } catch {}
+    let cancelled = false;
+    (async () => {
+      setLoadingCfg(true);
+      setCfgErr(null);
+      try {
+        // 1) try server blob
+        const res = await fetch('/api/budget-config');
+        const json = await res.json();
+        if (!cancelled && json?.ok && json.config) {
+          setCfg(json.config);
+          localStorage.setItem('budgets-v2', JSON.stringify(json.config));
+          setLoadingCfg(false);
+          return;
+        }
+        // 2) fallback local
+        const raw = localStorage.getItem('budgets-v2');
+        if (!cancelled && raw) {
+          setCfg(JSON.parse(raw));
+          setLoadingCfg(false);
+          return;
+        }
+        // 3) defaults
+        if (!cancelled) setLoadingCfg(false);
+      } catch (e) {
+        if (!cancelled) {
+          setCfgErr(String(e?.message || e));
+          // still try local
+          const raw = localStorage.getItem('budgets-v2');
+          if (raw) setCfg(JSON.parse(raw));
+          setLoadingCfg(false);
+        }
+      }
+    })();
+    return () => { cancelled = true; };
   }, []);
-  const save = (next) => {
+
+  const save = async (next) => {
     setCfg(next);
-    localStorage.setItem("budgets-v2", JSON.stringify(next));
+    localStorage.setItem('budgets-v2', JSON.stringify(next));
+    try {
+      await fetch('/api/budget-config', {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(next),
+      });
+    } catch (e) {
+      console.error('Blob save failed (kept local copy):', e);
+    }
   };
-  return [cfg, save];
+
+  return [cfg, save, loadingCfg, cfgErr];
 }
 
 const within = (iso, from, to) => {
@@ -127,7 +172,7 @@ export default function Budgets() {
     }));
   }, [items]);
 
-  const [cfg, saveCfg] = useConfig();
+  const [cfg, saveCfg, cfgLoading, cfgErr] = useConfig();
   const [sliceKey, setSliceKey] = React.useState(cfg.slices?.[0]?.key || "");
   const activeSlice = (cfg.slices || []).find(s => s.key === sliceKey) || null;
 
@@ -214,8 +259,8 @@ export default function Budgets() {
       </section>
 
       {/* Budget tables */}
-      {isLoading && <p>Loading…</p>}
-      {error && <p style={{ color: "crimson" }}>Error: {String(error)}</p>}
+      {cfgLoading && <p>Loading…</p>}
+      {cfgErr && <p style={{ color: "crimson" }}>Config error: {String(error)}</p>}
 
       {(cfg.budgets || []).map(b => {
         const roll = totalsByBudget[b.key];
