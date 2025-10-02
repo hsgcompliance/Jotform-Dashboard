@@ -397,7 +397,7 @@ export default function CreditCards() {
               type="date"
               value={fromDate}
               onChange={(e) => setFromDate(e.target.value)}
-              InputLabelProps={{ shrink: true }}
+              slotProps={{ inputLabel: { shrink: true } }}
               size="small"
             />
             <TextField
@@ -405,7 +405,7 @@ export default function CreditCards() {
               type="date"
               value={toDate}
               onChange={(e) => setToDate(e.target.value)}
-              InputLabelProps={{ shrink: true }}
+              slotProps={{ inputLabel: { shrink: true } }}
               size="small"
             />
             <TextField

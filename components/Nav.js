@@ -5,14 +5,22 @@ export default function Nav() {
   return (
     <AppBar position="static">
       <Toolbar sx={{ gap: 2 }}>
-        <Link href="/credit-cards" passHref legacyBehavior><Button color="inherit">Credit Cards</Button></Link>
-        <Link href="/budgets" passHref legacyBehavior><Button color="inherit">Credit Cards</Button></Link>
-        <Link href="/live" passHref legacyBehavior><Button color="inherit">Live Feed</Button></Link>
-        <Link href="/" passHref legacyBehavior><Button color="inherit">Dashboard</Button></Link>
-        <Link href="/builder" passHref legacyBehavior><Button color="inherit">Clone Template</Button></Link>
+        <Link href="/line-items" passHref legacyBehavior>
+          <Button color="inherit">Ledger</Button>
+        </Link>
+        <Link href="/budgets" passHref legacyBehavior>
+          <Button color="inherit">Budgets</Button>
+        </Link>
+        <Link href="/live" passHref legacyBehavior>
+          <Button color="inherit">Live Feed</Button>
+        </Link>
+        <Link href="/" passHref legacyBehavior>
+          <Button color="inherit">Dashboard</Button>
+        </Link>
+        <Link href="/builder" passHref legacyBehavior>
+          <Button color="inherit">Clone Template</Button>
+        </Link>
       </Toolbar>
     </AppBar>
   );
 }
-
-//<Link href="/webhooks" passHref legacyBehavior><Button color="inherit">Webhooks</Button></Link>

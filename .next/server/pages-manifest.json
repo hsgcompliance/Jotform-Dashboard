@@ -1,1 +1,7 @@
-{"/_app":"pages/_app.js","/_error":"pages/_error.js","/api/auth/[...nextauth]":"pages/api/auth/[...nextauth].js","/api/latest":"pages/api/latest.js","/api/card-tracker":"pages/api/card-tracker.js","/api/forms":"pages/api/forms.js","/api/clone":"pages/api/clone.js","/api/purchases":"pages/api/purchases.js","/api/signDocs":"pages/api/signDocs.js","/api/webhooks":"pages/api/webhooks.js","/api/signForms":"pages/api/signForms.js","/budgets":"pages/budgets.html","/builder":"pages/builder.html","/api/submissions":"pages/api/submissions.js","/":"pages/index.html","/line-items":"pages/line-items.html","/credit-cards":"pages/credit-cards.html","/live":"pages/live.html","/webhooks":"pages/webhooks.html","/api/budget-config":"pages/api/budget-config.js","/_document":"pages/_document.js","/404":"pages/404.html"}
+{
+  "/_app": "pages/_app.js",
+  "/_error": "pages/_error.js",
+  "/_document": "pages/_document.js",
+  "/api/purchases": "pages/api/purchases.js",
+  "/api/auth/[...nextauth]": "pages/api/auth/[...nextauth].js"
+}

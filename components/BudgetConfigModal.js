@@ -2,9 +2,22 @@
 import React from "react";
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
-  IconButton, Button, TextField, MenuItem
+  IconButton, Button, TextField, MenuItem, FormControlLabel, Switch, Tooltip
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
+
+const allowedFields = [
+  "program_raw",
+  "expense_type_raw",
+  "card_bucket",
+  "description",
+  "merchant",
+  "billedTo",
+  "isFlex",
+];
+
+const emptyLeaf = () => ({ field: "program_raw", match: "", mode: "icontains" });
+const emptyGroup = () => ({ op: "OR", rules: [emptyLeaf()] });
 
 const emptyBudget = () => ({
   key: "",
@@ -14,49 +27,225 @@ const emptyBudget = () => ({
   from: "",
   to: "",
   type: "standard",      // 'standard' | 'yhdp_flex'
-  rules: [               // icontains on these fields
-    { field: "program_raw", match: "", mode: "icontains" }
-  ]
+  rulesOp: "OR",
+  rules: [ emptyLeaf() ],
 });
+
+// ---------- Small helpers ----------
+const clone = (x) => JSON.parse(JSON.stringify(x));
+const isGroup = (node) => node && Array.isArray(node.rules);
+
+// ---------- Rule leaf row ----------
+function RuleRow({ value, onChange, onRemove }) {
+  const v = value || emptyLeaf();
+  const isFlex = v.field === "isFlex";
+
+  const handleField = (field) => {
+    const next = { ...v, field };
+    // if switching to isFlex, force equals + boolean match
+    if (field === "isFlex") {
+      next.mode = "equals";
+      if (next.match !== "true" && next.match !== "false") next.match = "true";
+    }
+    onChange(next);
+  };
+
+  const handleMode = (mode) => onChange({ ...v, mode });
+  const handleMatch = (match) => onChange({ ...v, match });
+
+  return (
+    <div style={{ display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+      <TextField
+        select
+        label="Field"
+        size="small"
+        value={v.field}
+        onChange={(e) => handleField(e.target.value)}
+        sx={{ minWidth: 180 }}
+      >
+        {allowedFields.map((f) => (
+          <MenuItem key={f} value={f}>{f}</MenuItem>
+        ))}
+      </TextField>
+
+      {isFlex ? (
+        <>
+          <Tooltip title="isFlex only supports equality">
+            <TextField
+              select
+              label="Mode"
+              size="small"
+              value="equals"
+              disabled
+              sx={{ minWidth: 130 }}
+            >
+              <MenuItem value="equals">equals</MenuItem>
+            </TextField>
+          </Tooltip>
+
+          <TextField
+            select
+            label="Match"
+            size="small"
+            value={v.match === "false" ? "false" : "true"}
+            onChange={(e) => handleMatch(e.target.value)}
+            sx={{ minWidth: 130 }}
+          >
+            <MenuItem value="true">true</MenuItem>
+            <MenuItem value="false">false</MenuItem>
+          </TextField>
+        </>
+      ) : (
+        <>
+          <TextField
+            select
+            label="Mode"
+            size="small"
+            value={v.mode || "icontains"}
+            onChange={(e) => handleMode(e.target.value)}
+            sx={{ minWidth: 130 }}
+          >
+            <MenuItem value="icontains">icontains</MenuItem>
+            <MenuItem value="equals">equals</MenuItem>
+          </TextField>
+
+          <TextField
+            label="Match"
+            size="small"
+            value={v.match ?? ""}
+            onChange={(e) => handleMatch(e.target.value)}
+            sx={{ minWidth: 220 }}
+          />
+        </>
+      )}
+
+      <Button size="small" onClick={onRemove}>Remove</Button>
+    </div>
+  );
+}
+
+// ---------- Recursive group editor ----------
+export function GroupEditor({ node, onChange, isRoot = false }) {
+  const n = node && isGroup(node) ? node : emptyGroup();
+
+  const setOp = (op) => onChange({ ...n, op });
+  const replaceChild = (idx, nextChild) => {
+    const next = clone(n);
+    next.rules[idx] = nextChild;
+    onChange(next);
+  };
+  const addLeaf = () => {
+    const next = clone(n);
+    next.rules.push(emptyLeaf());
+    onChange(next);
+  };
+  const addGroup = () => {
+    const next = clone(n);
+    next.rules.push(emptyGroup());
+    onChange(next);
+  };
+  const removeChild = (idx) => {
+    const next = clone(n);
+    next.rules.splice(idx, 1);
+    if (next.rules.length === 0) next.rules.push(emptyLeaf());
+    onChange(next);
+  };
+
+  return (
+    <div style={{
+      border: isRoot ? "1px dashed #e3e7ee" : "1px solid #e3e7ee",
+      borderRadius: 8,
+      padding: 10,
+      marginBottom: 10,
+      background: isRoot ? "#fafbff" : "#fff",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+        <TextField
+          select
+          size="small"
+          label={isRoot ? "Top-level Operator" : "Group Operator"}
+          value={n.op || "OR"}
+          onChange={(e) => setOp(e.target.value)}
+          sx={{ minWidth: 160 }}
+        >
+          <MenuItem value="OR">OR</MenuItem>
+          <MenuItem value="AND">AND</MenuItem>
+        </TextField>
+        <div style={{ fontSize: 12, opacity: 0.7 }}>
+          {isRoot ? "Rows must satisfy this operator across all child rules/groups." :
+                    "This group’s children are combined with this operator."}
+        </div>
+      </div>
+
+      {/* Children */}
+      {(n.rules || []).map((child, idx) => (
+        <div key={idx} style={{ marginLeft: 6 }}>
+          {isGroup(child) ? (
+            <div style={{ position: "relative" }}>
+              <GroupEditor
+                node={child}
+                onChange={(nextChild) => replaceChild(idx, nextChild)}
+              />
+              <div>
+                <Button size="small" onClick={() => removeChild(idx)}>Remove Group</Button>
+              </div>
+            </div>
+          ) : (
+            <RuleRow
+              value={child}
+              onChange={(nextLeaf) => replaceChild(idx, nextLeaf)}
+              onRemove={() => removeChild(idx)}
+            />
+          )}
+        </div>
+      ))}
+
+      {/* Adders */}
+      <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+        <Button size="small" variant="outlined" onClick={addLeaf}>Add Rule</Button>
+        <Button size="small" variant="outlined" onClick={addGroup}>Add Group</Button>
+      </div>
+    </div>
+  );
+}
 
 export default function BudgetConfigModal({ open, onClose, cfg, onSave }) {
   const [local, setLocal] = React.useState(cfg);
 
   React.useEffect(() => setLocal(cfg), [cfg]);
 
-  const addBudget = () => {
-    const next = { ...local, budgets: [...(local.budgets || []), emptyBudget()] };
-    setLocal(next);
-  };
-  const removeBudget = (idx) => {
-    const next = { ...local, budgets: local.budgets.filter((_, i) => i !== idx) };
-    setLocal(next);
+  const updateBudget = (idx, patch) => {
+    setLocal((prev) => {
+      const next = clone(prev);
+      next.budgets[idx] = { ...next.budgets[idx], ...patch };
+      return next;
+    });
   };
 
-  const addRule = (bIdx) => {
-    const next = { ...local };
-    next.budgets[bIdx].rules.push({ field: "program_raw", match: "", mode: "icontains" });
-    setLocal(next);
+  const addBudget = () => {
+    setLocal((prev) => ({
+      ...prev,
+      budgets: [...(prev.budgets || []), emptyBudget()],
+    }));
   };
-  const removeRule = (bIdx, rIdx) => {
-    const next = { ...local };
-    next.budgets[bIdx].rules.splice(rIdx, 1);
-    setLocal(next);
+  const removeBudget = (idx) => {
+    setLocal((prev) => ({
+      ...prev,
+      budgets: (prev.budgets || []).filter((_, i) => i !== idx),
+    }));
   };
 
   const addSlice = () => {
-    const next = {
-      ...local,
-      slices: [
-        ...(local.slices || []),
-        { key: "", label: "", from: "", to: "" }
-      ]
-    };
-    setLocal(next);
+    setLocal((prev) => ({
+      ...prev,
+      slices: [...(prev.slices || []), { key: "", label: "", from: "", to: "" }],
+    }));
   };
   const removeSlice = (idx) => {
-    const next = { ...local, slices: local.slices.filter((_, i) => i !== idx) };
-    setLocal(next);
+    setLocal((prev) => ({
+      ...prev,
+      slices: (prev.slices || []).filter((_, i) => i !== idx),
+    }));
   };
 
   return (
@@ -67,68 +256,79 @@ export default function BudgetConfigModal({ open, onClose, cfg, onSave }) {
           <CloseIcon fontSize="small" />
         </IconButton>
       </DialogTitle>
+
       <DialogContent dividers>
         {/* Budgets */}
         <h3 style={{ marginTop: 0 }}>Budgets</h3>
         {(local.budgets || []).map((b, i) => (
           <div key={i} style={{ border: "1px solid #eee", padding: 12, borderRadius: 8, marginBottom: 12 }}>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <TextField label="Key" size="small" value={b.key}
-                onChange={(e)=> {
-                  const next={...local}; next.budgets[i].key=e.target.value; setLocal(next);
-                }} />
-              <TextField label="Label" size="small" value={b.label}
-                onChange={(e)=> {
-                  const next={...local}; next.budgets[i].label=e.target.value; setLocal(next);
-                }} />
-              <TextField select label="Type" size="small" value={b.type}
-                onChange={(e)=> {
-                  const next={...local}; next.budgets[i].type=e.target.value; setLocal(next);
-                }} sx={{ minWidth: 160 }}>
+              <TextField
+                label="Key"
+                size="small"
+                value={b.key}
+                onChange={(e) => updateBudget(i, { key: e.target.value })}
+              />
+              <TextField
+                label="Label"
+                size="small"
+                value={b.label}
+                onChange={(e) => updateBudget(i, { label: e.target.value })}
+              />
+              <TextField
+                select
+                label="Type"
+                size="small"
+                value={b.type}
+                onChange={(e) => updateBudget(i, { type: e.target.value })}
+                sx={{ minWidth: 200 }}
+              >
                 <MenuItem value="standard">Standard</MenuItem>
                 <MenuItem value="yhdp_flex">YHDP FLEX (show client & billed-to)</MenuItem>
               </TextField>
-              <TextField type="date" label="From" size="small" InputLabelProps={{ shrink: true }} value={b.from}
-                onChange={(e)=> {
-                  const next={...local}; next.budgets[i].from=e.target.value; setLocal(next);
-                }} />
-              <TextField type="date" label="To" size="small" InputLabelProps={{ shrink: true }} value={b.to}
-                onChange={(e)=> {
-                  const next={...local}; next.budgets[i].to=e.target.value; setLocal(next);
-                }} />
-              <TextField type="number" label="Budget" size="small" value={b.budget}
-                onChange={(e)=> {
-                  const next={...local}; next.budgets[i].budget=Number(e.target.value||0); setLocal(next);
-                }} />
-              <TextField type="number" label="Starting Spent" size="small" value={b.startSpent}
-                onChange={(e)=> {
-                  const next={...local}; next.budgets[i].startSpent=Number(e.target.value||0); setLocal(next);
-                }} />
-              <Button color="error" onClick={()=>removeBudget(i)}>Remove Budget</Button>
+              <TextField
+                type="date"
+                label="From"
+                size="small"
+                slotProps={{ inputLabel: { shrink: true } }}
+                value={b.from}
+                onChange={(e) => updateBudget(i, { from: e.target.value })}
+              />
+              <TextField
+                type="date"
+                label="To"
+                size="small"
+                slotProps={{ inputLabel: { shrink: true } }}
+                value={b.to}
+                onChange={(e) => updateBudget(i, { to: e.target.value })}
+              />
+              <TextField
+                type="number"
+                label="Budget"
+                size="small"
+                value={b.budget}
+                onChange={(e) => updateBudget(i, { budget: Number(e.target.value || 0) })}
+              />
+              <TextField
+                type="number"
+                label="Starting Spent"
+                size="small"
+                value={b.startSpent}
+                onChange={(e) => updateBudget(i, { startSpent: Number(e.target.value || 0) })}
+              />
+              <Button color="error" onClick={() => removeBudget(i)}>Remove Budget</Button>
             </div>
 
-            <div style={{ marginTop: 10 }}>
-              <div style={{ fontWeight: 600, marginBottom: 6 }}>Rules (icontains)</div>
-              {(b.rules || []).map((r, j) => (
-                <div key={j} style={{ display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
-                  <TextField select label="Field" size="small" value={r.field}
-                    onChange={(e)=> {
-                      const next={...local}; next.budgets[i].rules[j].field=e.target.value; setLocal(next);
-                    }}>
-                    <MenuItem value="program_raw">program_raw</MenuItem>
-                    <MenuItem value="expense_type_raw">expense_type_raw</MenuItem>
-                    <MenuItem value="card_bucket">card_bucket</MenuItem>
-                    <MenuItem value="description">description</MenuItem>
-                    <MenuItem value="merchant">merchant</MenuItem>
-                  </TextField>
-                  <TextField label="Match" size="small" value={r.match}
-                    onChange={(e)=> {
-                      const next={...local}; next.budgets[i].rules[j].match=e.target.value; setLocal(next);
-                    }} />
-                  <Button size="small" onClick={()=>removeRule(i,j)}>Remove</Button>
-                </div>
-              ))}
-              <Button size="small" variant="outlined" onClick={()=>addRule(i)}>Add Rule</Button>
+            {/* Advanced nested rules: treat top-level as a group {op: rulesOp, rules} */}
+            <div style={{ marginTop: 12 }}>
+              <div style={{ fontWeight: 600, marginBottom: 6 }}>Rules (nested)</div>
+              <GroupEditor
+                isRoot
+                node={{ op: b.rulesOp || "OR", rules: b.rules || [] }}
+                onChange={(nextRoot) => {
+                  updateBudget(i, { rulesOp: nextRoot.op || "OR", rules: nextRoot.rules || [] });
+                }}
+              />
             </div>
           </div>
         ))}
@@ -138,30 +338,60 @@ export default function BudgetConfigModal({ open, onClose, cfg, onSave }) {
         <h3>Time Slices (nicknamed ranges)</h3>
         {(local.slices || []).map((s, i) => (
           <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-            <TextField label="Key" size="small" value={s.key}
-              onChange={(e)=> {
-                const next={...local}; next.slices[i].key=e.target.value; setLocal(next);
-              }} />
-            <TextField label="Label" size="small" value={s.label}
-              onChange={(e)=> {
-                const next={...local}; next.slices[i].label=e.target.value; setLocal(next);
-              }} />
-            <TextField type="date" label="From" size="small" InputLabelProps={{ shrink: true }} value={s.from}
-              onChange={(e)=> {
-                const next={...local}; next.slices[i].from=e.target.value; setLocal(next);
-              }} />
-            <TextField type="date" label="To" size="small" InputLabelProps={{ shrink: true }} value={s.to}
-              onChange={(e)=> {
-                const next={...local}; next.slices[i].to=e.target.value; setLocal(next);
-              }} />
-            <Button color="error" onClick={()=>removeSlice(i)}>Remove</Button>
+            <TextField
+              label="Key"
+              size="small"
+              value={s.key}
+              onChange={(e) => {
+                const next = clone(local);
+                next.slices[i].key = e.target.value;
+                setLocal(next);
+              }}
+            />
+            <TextField
+              label="Label"
+              size="small"
+              value={s.label}
+              onChange={(e) => {
+                const next = clone(local);
+                next.slices[i].label = e.target.value;
+                setLocal(next);
+              }}
+            />
+            <TextField
+              type="date"
+              label="From"
+              size="small"
+              slotProps={{ inputLabel: { shrink: true } }}
+              value={s.from}
+              onChange={(e) => {
+                const next = clone(local);
+                next.slices[i].from = e.target.value;
+                setLocal(next);
+              }}
+            />
+            <TextField
+              type="date"
+              label="To"
+              size="small"
+              slotProps={{ inputLabel: { shrink: true } }}
+              value={s.to}
+              onChange={(e) => {
+                const next = clone(local);
+                next.slices[i].to = e.target.value;
+                setLocal(next);
+              }}
+            />
+            <Button color="error" onClick={() => removeSlice(i)}>Remove</Button>
           </div>
         ))}
         <Button variant="outlined" onClick={addSlice}>Add Slice</Button>
       </DialogContent>
+
       <DialogActions>
-        <Button onClick={()=>onSave(local)} variant="contained">Save</Button>
+        <Button onClick={() => onSave(local)} variant="contained">Save</Button>
       </DialogActions>
     </Dialog>
   );
 }
+

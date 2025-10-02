@@ -1,6 +1,8 @@
 // components/jotformMap.js
+//
+// Normalize Jotform submissions into uniform line items for cards + invoices
 
-// ---------- utils ----------
+// ─────────── helpers ───────────
 const asNumber = (val) => {
   if (val == null) return undefined;
   if (typeof val === "number") return val;
@@ -11,6 +13,245 @@ const asNumber = (val) => {
   return undefined;
 };
 
+const textify = (v) => (v == null ? "" : String(v).trim());
+const arr = (v) => (Array.isArray(v) ? v : v ? [v] : []);
+const truthy = (v) => {
+  if (Array.isArray(v)) return v.length > 0; // checkbox with any selection
+  const s = String(v ?? '').trim().toLowerCase();
+  return ['y','yes','true','1','checked','on'].includes(s);
+};
+
+function findFlexFlag(byId) {
+  // Accept labels like: "Is Flex Funds?", "Flex Funds", "YHDP Flex Funds?"
+  for (const a of Object.values(byId || {})) {
+    const label = String(a?.label || a?.text || a?.name || '').toLowerCase();
+    if (label.includes('flex') && label.includes('fund')) {
+      const val = a?.prettyFormat ?? a?.answer ?? a?.value ?? '';
+      return truthy(val);
+    }
+  }
+  return false;
+}
+
+function buildMaps(sub) {
+  const ans = sub?.answers || {};
+  const byId = {};
+  const byLabel = {};
+  for (const qid of Object.keys(ans)) {
+    const a = ans[qid];
+    byId[qid] = a;
+    const label = (a?.label || a?.text || a?.name || "").trim();
+    const rawAns = a?.prettyFormat ?? a?.answer ?? a?.value ?? "";
+    if (label) byLabel[label] = rawAns;
+  }
+  return { byId, byLabel };
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// CREDIT CARDS (form 251878265158166)
+// ──────────────────────────────────────────────────────────────────────────────
+function normalizeCreditCard(sub) {
+  const { byId } = buildMaps(sub);
+
+  const createdAt = sub?.created_at || new Date().toISOString();
+  const isFlex = findFlexFlag(byId);
+
+  // Card label → infer bucket
+  const cardLabel =
+    textify(byId?.["33"]?.answer) ||
+    // try to pull from the summary text if user typed it there
+    (textify(byId?.["64"]?.text).match(/Card charged:\s*([^<\n]+)/i)?.[1] || "");
+
+  const cardBucket = bucketCard(cardLabel);
+
+  // per-transaction id slots (merchant/expense/program/customer/cost/file)
+  const slots = [
+    { m: "82",  e: "84",  p: "169", cName: "156", cost: "86",  file: "70"  }, // t1 (file 70 is global; keep on t1 too)
+    { m: "182", e: "183", p: "184", cName: "185", cost: "107", file: "109" },
+    { m: "187", e: "188", p: "189", cName: "190", cost: "115", file: "117" },
+    { m: "192", e: "193", p: "194", cName: "195", cost: "123", file: "125" },
+    { m: "197", e: "198", p: "199", cName: "200", cost: "131", file: "133" },
+  ];
+
+  const items = [];
+  for (const s of slots) {
+    const amount = asNumber(byId?.[s.cost]?.answer);
+    if (amount == null || Number.isNaN(amount)) continue;
+
+    const merchant = textify(byId?.[s.m]?.answer);
+    const expenseType = textify(byId?.[s.e]?.answer);
+    const program = textify(byId?.[s.p]?.answer);
+    const customer = textify(byId?.[s.cName]?.answer);
+    const fileList = [
+      ...arr(byId?.[s.file]?.answer),
+      ...(s === slots[0] ? arr(byId?.["70"]?.answer) : []), // include top-level upload on first txn too
+    ].filter(Boolean);
+
+    items.push({
+      id: sub?.id,
+      baseId: sub?.id,
+      source: "credit-card",          // normalized lowercase
+      createdAt,
+      card: cardLabel || cardBucket,  // raw text if present; else bucket
+      cardBucket,                     // "Housing" | "Youth" | ""
+      merchant,
+      expenseType,
+      program,
+      customer,
+      amount,
+      files: fileList,
+      isFlex,
+      raw: sub,
+    });
+  }
+
+  // If nothing parsed but we want visibility, emit a zero row
+  if (items.length === 0) {
+    items.push({
+      id: sub?.id,
+      baseId: sub?.id,
+      source: "credit-card",
+      createdAt,
+      card: cardLabel || cardBucket,
+      cardBucket,
+      merchant: textify(byId?.["82"]?.answer),
+      expenseType: textify(byId?.["84"]?.answer),
+      program: textify(byId?.["169"]?.answer),
+      customer: textify(byId?.["156"]?.answer),
+      amount: asNumber(byId?.["86"]?.answer) ?? 0,
+      files: arr(byId?.["70"]?.answer),
+      isFlex,
+      raw: sub,
+    });
+  }
+
+  return items;
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// INVOICES (form 252674777246167)
+// Handles: For a Client, For a Program, single and multi-grant splits
+// ──────────────────────────────────────────────────────────────────────────────
+function invoiceGrantSplits(byId) {
+  // billTo ids & amount ids are paired by index if present
+  const billToIds = ["112", "116", "117", "118", "119"];
+  const amountIds = ["124", "125", "126", "127", "128", "129", "130", "131", "132", "133"];
+
+  const billVals = billToIds.map((id) => textify(byId?.[id]?.answer)).filter((x) => x !== "");
+  const amtVals = amountIds
+    .map((id) => {
+      const n = asNumber(byId?.[id]?.answer);
+      return n != null && !Number.isNaN(n) ? n : null;
+    })
+    .filter((x) => x != null);
+
+  const rows = [];
+  const n = Math.min(billVals.length, amtVals.length);
+  for (let i = 0; i < n; i++) rows.push({ billedTo: billVals[i], amount: amtVals[i] });
+  return rows;
+}
+
+function normalizeInvoice(sub) {
+  const { byId } = buildMaps(sub);
+  const isFlex = findFlexFlag(byId);
+ // official spend date priority: invoice(31) → submission(4) → created_at
+ const createdAt =
+   byId?.["31"]?.prettyFormat ||
+   byId?.["4"]?.prettyFormat ||
+   sub?.created_at ||
+   new Date().toISOString();
+
+  // Primary fields
+  const vendor        = textify(byId?.["74"]?.answer); // Vendor Receiving Payment (merchant)
+  const expenseType   = textify(byId?.["34"]?.answer); // For a Client | For a Program
+  const serviceType   = textify(byId?.["53"]?.answer); // Program-ish (e.g., YHDP Flex Funds)
+  const billedTo112   = textify(byId?.["112"]?.answer); // Bill To
+  const purchaser     = textify(byId?.["33"]?.answer); // Purchaser
+  const projectTop    = textify(byId?.["55"]?.answer); // Project (top-level)
+  const paymentMethod = textify(byId?.["95"]?.answer); // Payment Method
+  const note          = textify(byId?.["111"]?.answer); // Note
+  const email         = textify(byId?.["25"]?.answer); // Hidden email
+  const firstName     = textify(byId?.["84"]?.answer);
+  const lastName      = textify(byId?.["85"]?.answer);
+  const customer      = [firstName, lastName].filter(Boolean).join(" ").trim(); // may be blank for Program
+
+  // Billing target + descriptor rules (your spec)
+  const isCustomer = /^for a customer/i.test(expenseType);
+  // Where $$ is billed:
+  // - For Customer: use Project
+  // - For Program: use Bill To
+  const billingTarget = isCustomer ? (projectTop || "") : (billedTo112 || "");
+  // 'program' field we expose for rollups: the billing target (deterministic)
+  const program = billingTarget || projectTop || billedTo112 || "";
+  // descriptor (optional) for UI display
+  const descriptor = isCustomer ? serviceType : "";
+
+  const isMulti = (textify(byId?.["114"]?.answer) || "").toLowerCase().startsWith("y"); // “Bill to Multiple Grants?” Yes
+
+  const common = {
+    source: "invoice",
+    createdAt,
+    merchant: vendor || "",
+    expenseType,
+    program,
+    descriptor,
+    project: projectTop || "",
+    purchaser,
+    customer, // blank when not applicable
+    email,
+    paymentMethod,
+    note,
+    files: [
+      ...arr(byId?.["7"]?.answer),   // itemized receipt
+      ...arr(byId?.["28"]?.answer),  // Chafee/PATH/required docs
+      ...arr(byId?.["29"]?.answer),  // training/conference agenda
+    ].filter(Boolean),
+    isFlex,
+    raw: sub,
+  };
+
+  const items = [];
+
+  if (isMulti) {
+    const splits = invoiceGrantSplits(byId); // pairs billTo*** with amountTo***
+    if (splits.length) {
+      splits.forEach((s, i) => {
+        items.push({
+          id: `${sub.id}-${i}`,
+          baseId: sub.id,
+          ...common,
+          billedTo: s.billedTo || billingTarget,
+          amount: s.amount ?? 0,
+        });
+      });
+      return items;
+    }
+    // If “multiple” selected but no pairs found, fall through to single
+  }
+
+  // Single-line invoice: amount from Cost (17), billedTo prefer 112 then project
+  const amount = asNumber(byId?.["17"]?.answer) ?? 0;
+  const billedTo = billingTarget;
+
+  items.push({
+    id: sub.id,
+    baseId: sub.id,
+    ...common,
+    billedTo,
+    amount,
+  });
+
+  return items;
+}
+
+// ─────────── utilities we export for callers ───────────
+export function bucketCard(cardLabel = "") {
+  const s = String(cardLabel).toLowerCase();
+  if (s.includes("youth")) return "Youth";
+  if (s.includes("housing")) return "Housing";
+  return "";
+}
+
 export function monthKey(iso) {
   const d = new Date(iso);
   const y = d.getFullYear();
@@ -18,228 +259,23 @@ export function monthKey(iso) {
   return `${y}-${m}`;
 }
 
-export function bucketCard(cardLabel) {
-  const s = (cardLabel || "").toLowerCase();
-  if (s.includes("youth")) return "Youth";
-  if (s.includes("housing")) return "Housing";
-  return "Housing";
-}
-
-const pick = (obj, labels) => {
-  for (const key of labels) {
-    const v = obj?.[key];
-    if (v != null && v !== "") return v;
-  }
-};
-
-// ---------- card submissions (existing) ----------
-function buildMaps(sub) {
-  const answers = sub?.answers || {};
-  const byLabel = {};
-  const byId = {};
-  for (const qid of Object.keys(answers)) {
-    const a = answers[qid];
-    byId[qid] = a;
-    const label = (a?.label || a?.text || a?.name || "").trim();
-    const rawAns = a?.prettyFormat ?? a?.answer ?? a?.value ?? "";
-    if (label) byLabel[label] = rawAns;
-  }
-  return { byLabel, byId };
-}
-
-// Credit Card normalize (Transaction 1..5 costs)
+// ──────────────────────────────────────────────────────────────────────────────
+// Public API
+// ──────────────────────────────────────────────────────────────────────────────
 export function normalizeSubmission(sub) {
-  const { byLabel, byId } = buildMaps(sub);
+  const formId = String(sub?.form_id || "");
+  if (formId === "251878265158166") return normalizeCreditCard(sub);
+  if (formId === "252674777246167") return normalizeInvoice(sub);
 
-  const createdAt = sub?.created_at || new Date().toISOString();
-  const cardLabel =
-    byId?.["33"]?.answer ||
-    pick(byLabel, ["Card charged", "Card being returned"]) ||
-    "";
-
-  const email =
-    byId?.["56"]?.answer ||
-    pick(byLabel, ["Email", "Email address", "email"]) ||
-    "";
-
-  const fallbackMerchant = pick(byLabel, [
-    "Merchant",
-    "Vendor",
-    "What was purchased?",
-    "Description",
-  ]);
-  const fallbackExpense = pick(byLabel, ["Expense Type", "Category"]);
-
-  const slots = [
-    { m: "82",  e: "84",  c: "86",  cust: "156", files: "70",  notes: "151" },
-    { m: "182", e: "183", c: "107", cust: "185", files: "109", notes: "143" },
-    { m: "187", e: "188", c: "115", cust: "190", files: "117", notes: "147" },
-    { m: "192", e: "193", c: "123", cust: "195", files: "125", notes: ""    },
-    { m: "197", e: "198", c: "131", cust: "200", files: "133", notes: ""    },
-  ];
-
-  const items = [];
-  for (const s of slots) {
-    const m = byId?.[s.m]?.answer ?? (s.m === "82" ? fallbackMerchant : "");
-    const e = byId?.[s.e]?.answer ?? (s.e === "84" ? fallbackExpense : "");
-    const c = asNumber(byId?.[s.c]?.answer);
-    if (c != null && !Number.isNaN(c)) {
-      // files array
-      const f = byId?.[s.files]?.answer;
-      const files = Array.isArray(f) ? f : f ? [f] : [];
-      items.push({
-        id: sub?.id,
-        source: "card",
-        createdAt,
-        merchant: String(m || "").trim(),
-        expenseType: String(e || "").trim(),
-        program: byId?.["169"]?.answer || "", // Supportive Services Program (top-level if present)
-        card: String(cardLabel || "").trim(),
-        email: String(email || "").trim(),
-        customer: byId?.[s.cust]?.answer || "",
-        amount: c,
-        files,
-        notes: s.notes ? (byId?.[s.notes]?.answer || "") : "",
-        raw: sub,
-      });
-    }
-  }
-
-  if (items.length === 0) {
-    items.push({
-      id: sub?.id,
-      source: "card",
-      createdAt,
-      merchant: String(fallbackMerchant || "").trim(),
-      expenseType: String(fallbackExpense || "").trim(),
-      program: byId?.["169"]?.answer || "",
-      card: String(cardLabel || "").trim(),
-      email: String(email || "").trim(),
-      customer: byId?.["156"]?.answer || "",
-      amount: 0,
-      files: [],
-      notes: "",
-      raw: sub,
-    });
-  }
-  return items;
-}
-
-// ---------- invoice submissions (new) ----------
-/**
- * We extract: createdAt, merchant, expenseType/program (by labels),
- * amount, customer name, files.
- * You can refine the label IDs once you inspect the true invoice form JSON,
- * but this works off common Jotform patterns.
- */
-export function normalizeInvoice(sub) {
-  const { byLabel, byId } = buildMaps(sub);
-  const createdAt = sub?.created_at || new Date().toISOString();
-
-  // Likely labels in invoice form; adjust as needed after first run inspection
-  const merchant =
-    pick(byLabel, ["Merchant", "Vendor", "Payee", "Business Name"]) || "";
-  const expenseType =
-    pick(byLabel, ["Expense Type", "Category", "Reason"]) || "";
-  const program =
-    pick(byLabel, [
-      "Supportive Services Program",
-      "Program",
-      "Bill To",
-      "Funding Source",
-    ]) || "";
-  const customer =
-    pick(byLabel, ["Customer Name", "Client Name", "Household", "Participant"]) || "";
-  const email =
-    pick(byLabel, ["Email", "Email address", "Requester Email"]) || "";
-
-  // Try common amount labels, fall back to any numeric "Amount"/"Total"
-  const amountRaw =
-    pick(byLabel, ["Cost", "Amount", "Total", "Invoice Total", "Line Item Amount"]) || "";
-  const amount = asNumber(amountRaw) ?? 0;
-
-  // Attached invoice / receipts
-  const fileGuess = (
-    Object.values(byId)
-      .filter(a => a?.type === "control_fileupload")
-      .map(a => a?.answer)
-      .flat()
-      .filter(Boolean)
-  ) || [];
-  const files = Array.isArray(fileGuess) ? fileGuess : [fileGuess];
-
+  // Unknown form: pass through as one row
   return [
     {
       id: sub?.id,
-      source: "invoice",
-      createdAt,
-      merchant: String(merchant).trim(),
-      expenseType: String(expenseType).trim(),
-      program: String(program).trim(),
-      card: "", // not a card item
-      email: String(email).trim(),
-      customer: String(customer).trim(),
-      amount: amount || 0,
-      files,
-      notes: pick(byLabel, ["Notes", "Justification", "Comments"]) || "",
+      baseId: sub?.id,
+      source: "unknown",
+      createdAt: sub?.created_at || new Date().toISOString(),
+      amount: 0,
       raw: sub,
     },
   ];
-}
-
-// ---------- budget classification ----------
-/**
- * Turn an item into one or more budget buckets you care about.
- * This uses `program` and `expenseType` text matching.
- */
-export function classifyProgram(item) {
-  const p = (item.program || "").toLowerCase();
-  const e = (item.expenseType || "").toLowerCase();
-
-  const buckets = [];
-
-  // WIOA
-  if (p.includes("wioa") || e.includes("wioa")) {
-    buckets.push("WIOA Supportive Services");
-  }
-
-  // Chafee
-  if (p.includes("chafee") || e.includes("chafee")) {
-    buckets.push("Chafee Supportive Services");
-  }
-
-  // YHDP SN & DIV
-  if (p.includes("yhdp sn")) buckets.push("YHDP SN Supportive Service");
-  if (p.includes("yhdp div")) buckets.push("YHDP DIV Supportive Service");
-
-  // YHDP Flex (track clients list separately)
-  if (p.includes("flex")) {
-    buckets.push("YHDP FLEX");
-  }
-  if (/bill to bp.*flex/i.test(item.program || "")) {
-    buckets.push("YHDP FLEX");
-  }
-
-  // PATH buckets
-  if (p.includes("path") || e.includes("path")) {
-    if (/direct/i.test(p) || /direct/i.test(e) || /supportive service/i.test(p+e)) {
-      buckets.push("PATH: Direct Supportive Services");
-    }
-    if (/indirect/i.test(p) || /outreach supplies/i.test(p+e)) {
-      buckets.push("PATH: Indirect Program Expenses (outreach supplies)");
-    }
-    if (/supplies.*staff/i.test(p+e)) {
-      buckets.push("PATH: Supplies for staff");
-    }
-    if (/training|travel/i.test(p+e)) {
-      buckets.push("PATH: Training & Travel");
-    }
-  }
-
-  // If nothing matched but we have explicit program text, keep it as a generic bucket
-  if (buckets.length === 0 && item.program) {
-    buckets.push(item.program);
-  }
-
-  return buckets;
 }
