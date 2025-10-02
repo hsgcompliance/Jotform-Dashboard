@@ -1,3 +1,4 @@
+//pages/_app.js
 import { SessionProvider } from 'next-auth/react';
 import { createTheme, ThemeProvider, CssBaseline } from '@mui/material';
 import { useMemo, useState } from 'react';
@@ -13,16 +14,12 @@ export default function MyApp({ Component, pageProps: { session, ...rest } }) {
     <SessionProvider session={session}>
       <ThemeProvider theme={theme}>
         <CssBaseline />
-
-        {/* dark / light toggle */}
         <button
-          onClick={() => setMode(p => (p === 'light' ? 'dark' : 'light'))}
+          onClick={() => setMode((p) => (p === 'light' ? 'dark' : 'light'))}
           style={{ position: 'fixed', bottom: 16, right: 16, zIndex: 1300 }}
         >
           {mode === 'light' ? '🌙' : '☀️'}
         </button>
-
-        {/* auth gate + NAV + page */}
         <Gate>
           <ErrorBoundary>
             <Nav />

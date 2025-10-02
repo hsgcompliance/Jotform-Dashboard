@@ -24,6 +24,21 @@
           "type": "file"
         },
         {
+          "name": "BudgetConfigModal.js",
+          "path": "components\\BudgetConfigModal.js",
+          "type": "file"
+        },
+        {
+          "name": "BudgetTableEditor.js",
+          "path": "components\\BudgetTableEditor.js",
+          "type": "file"
+        },
+        {
+          "name": "CardLimitForm.js",
+          "path": "components\\CardLimitForm.js",
+          "type": "file"
+        },
+        {
           "name": "ErrorBoundary.js",
           "path": "components\\ErrorBoundary.js",
           "type": "file"
@@ -49,6 +64,11 @@
           "type": "file"
         },
         {
+          "name": "jotformMap.js",
+          "path": "components\\jotformMap.js",
+          "type": "file"
+        },
+        {
           "name": "ManualRefresh.js",
           "path": "components\\ManualRefresh.js",
           "type": "file"
@@ -61,6 +81,11 @@
         {
           "name": "PDFButton.js",
           "path": "components\\PDFButton.js",
+          "type": "file"
+        },
+        {
+          "name": "SlicesModal.js",
+          "path": "components\\SlicesModal.js",
           "type": "file"
         },
         {
@@ -123,6 +148,16 @@
               ]
             },
             {
+              "name": "budget-config.js",
+              "path": "pages\\api\\budget-config.js",
+              "type": "file"
+            },
+            {
+              "name": "card-tracker.js",
+              "path": "pages\\api\\card-tracker.js",
+              "type": "file"
+            },
+            {
               "name": "clone.js",
               "path": "pages\\api\\clone.js",
               "type": "file"
@@ -135,6 +170,11 @@
             {
               "name": "latest.js",
               "path": "pages\\api\\latest.js",
+              "type": "file"
+            },
+            {
+              "name": "purchases.js",
+              "path": "pages\\api\\purchases.js",
               "type": "file"
             },
             {
@@ -160,8 +200,18 @@
           ]
         },
         {
+          "name": "budgets.js",
+          "path": "pages\\budgets.js",
+          "type": "file"
+        },
+        {
           "name": "builder.js",
           "path": "pages\\builder.js",
+          "type": "file"
+        },
+        {
+          "name": "credit-cards.js",
+          "path": "pages\\credit-cards.js",
           "type": "file"
         },
         {
@@ -173,6 +223,11 @@
         {
           "name": "index.js",
           "path": "pages\\index.js",
+          "type": "file"
+        },
+        {
+          "name": "line-items.js",
+          "path": "pages\\line-items.js",
           "type": "file"
         },
         {
