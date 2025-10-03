@@ -44,8 +44,65 @@ const within = (iso, from, to) => {
   return true;
 };
 
+const norm = (s) => String(s || "").toLowerCase().trim();
+
+function decideTypeLabel(row) {
+  if ((row.source || "").toLowerCase() === "invoice") return "Invoice";
+  if (row.card_bucket === "Youth") return "Youth Card";
+  if (row.card_bucket === "Housing") return "Housing Card";
+  return "Card";
+}
+
+/* ---------------- Rule engine ---------------- */
+/** Flexible value resolver: supports virtual fields + graceful fallbacks */
+const fieldResolvers = {
+  // canonical program text we match against
+  program_raw: (it) =>
+    it.program_raw || it.program || it.project || it.billedTo || it.billed_to_raw || "",
+  // “For a Customer / Program” raw-ish
+  expense_type_raw: (it) => it.expense_type_raw || it.expenseType || "",
+  // normalized card bucket
+  card_bucket: (it) => it.card_bucket || it.cardBucket || "",
+  // keep individual raw-ish fields available for rules
+  billed_to_raw: (it) => it.billed_to_raw || it.billedTo || "",
+  project_raw: (it) => it.project || it.project_raw || "",
+  descriptor: (it) => it.descriptor || it.serviceType || "",
+  merchant: (it) => it.merchant || "",
+  customer: (it) => it.customer || "",
+  source: (it) => it.source || "",
+  type: (it) => it.type || decideTypeLabel(it),
+  card: (it) => it.card || "",
+  // VIRTUAL “bucket” text — scans across all relevant mapping fields
+  bucket_text: (it) =>
+    [
+      it.program_raw,
+      it.program,
+      it.billed_to_raw,
+      it.billedTo,
+      it.project,
+      it.project_raw,
+      it.descriptor,
+      it.expense_type_raw,
+      it.expenseType,
+      it.card,
+      it.card_bucket,
+      it.merchant,
+      it.customer,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase(),
+  // boolean passthrough
+  isFlex: (it) => (it.isFlex ? "true" : "false"),
+};
+
 const valOf = (it, field) => {
-  const v = it?.[field];
+  const key = String(field || "").trim();
+  if (fieldResolvers[key]) {
+    const out = fieldResolvers[key](it);
+    return typeof out === "boolean" ? String(out) : String(out ?? "");
+  }
+  const v = it?.[key];
   return typeof v === "boolean" ? String(v) : String(v ?? "");
 };
 
@@ -63,7 +120,7 @@ function matchesRules(it, rules, op = "OR") {
     x?.rules ? matchesRules(it, x.rules, x.op || "OR") : matchLeaf(it, x);
   return (op || "OR").toUpperCase() === "AND"
     ? rules.every(evalRule)
-    : rules.some(evalRule); // default OR
+    : rules.some(evalRule);
 }
 
 /* ---------------- Defaults ---------------- */
@@ -77,7 +134,7 @@ const defaultCfg = {
       from: "2025-07-01",
       to: "2026-06-30",
       type: "standard",
-      rules: [{ field: "program_raw", match: "wioa", mode: "icontains" }],
+      rules: [{ field: "bucket_text", match: "wioa", mode: "icontains" }],
     },
     {
       key: "CHAFEE_SS",
@@ -87,7 +144,7 @@ const defaultCfg = {
       from: "2025-07-01",
       to: "2026-06-30",
       type: "standard",
-      rules: [{ field: "program_raw", match: "chafee", mode: "icontains" }],
+      rules: [{ field: "bucket_text", match: "chafee", mode: "icontains" }],
     },
     {
       key: "YHDP_SN",
@@ -97,7 +154,7 @@ const defaultCfg = {
       from: "2024-10-01",
       to: "2025-09-30",
       type: "standard",
-      rules: [{ field: "program_raw", match: "yhdp sn", mode: "icontains" }],
+      rules: [{ field: "bucket_text", match: "yhdp sn", mode: "icontains" }],
     },
     {
       key: "YHDP_DIV",
@@ -107,7 +164,7 @@ const defaultCfg = {
       from: "2024-10-01",
       to: "2025-09-30",
       type: "standard",
-      rules: [{ field: "program_raw", match: "yhdp div", mode: "icontains" }],
+      rules: [{ field: "bucket_text", match: "yhdp div", mode: "icontains" }],
     },
     {
       key: "YHDP_FLEX",
@@ -120,8 +177,8 @@ const defaultCfg = {
       rulesOp: "OR",
       rules: [
         { field: "isFlex", match: "true", mode: "equals" },
-        { field: "program_raw", match: "flex", mode: "icontains" },
-        { field: "program_raw", match: "bill to bp: yhdp flex", mode: "icontains" },
+        { field: "bucket_text", match: "yhdp flex", mode: "icontains" },
+        { field: "bucket_text", match: "flex funds", mode: "icontains" },
       ],
     },
     {
@@ -133,7 +190,7 @@ const defaultCfg = {
       to: "2025-06-30",
       type: "standard",
       rules: [
-        { field: "program_raw", match: "path", mode: "icontains" },
+        { field: "bucket_text", match: "path", mode: "icontains" },
         { field: "expense_type_raw", match: "supportive", mode: "icontains" },
       ],
     },
@@ -145,7 +202,7 @@ const defaultCfg = {
       from: "2024-07-01",
       to: "2025-06-30",
       type: "standard",
-      rules: [{ field: "program_raw", match: "indirect", mode: "icontains" }],
+      rules: [{ field: "bucket_text", match: "indirect", mode: "icontains" }],
     },
     {
       key: "PATH_SUPPLIES",
@@ -155,7 +212,7 @@ const defaultCfg = {
       from: "2024-07-01",
       to: "2025-06-30",
       type: "standard",
-      rules: [{ field: "program_raw", match: "supplies for staff", mode: "icontains" }],
+      rules: [{ field: "bucket_text", match: "supplies for staff", mode: "icontains" }],
     },
     {
       key: "PATH_TT",
@@ -166,8 +223,8 @@ const defaultCfg = {
       to: "2025-06-30",
       type: "standard",
       rules: [
-        { field: "program_raw", match: "training", mode: "icontains" },
-        { field: "program_raw", match: "travel", mode: "icontains" },
+        { field: "bucket_text", match: "training", mode: "icontains" },
+        { field: "bucket_text", match: "travel", mode: "icontains" },
       ],
     },
   ],
@@ -331,7 +388,6 @@ function Stat({ label, value, danger }) {
 }
 
 /* ---------- Flex helper ---------- */
-const norm = (s) => String(s || "").toLowerCase().trim();
 function clientKey(item) {
   return norm(item.customer || "");
 }
@@ -368,7 +424,10 @@ function exportRowsToCsv(filename, rows) {
   a.click();
 }
 
-/* ---------------- Flex Clients Modal ---------------- */
+/* ---------------- Flex Clients Modal (unchanged) ---------------- */
+// (kept identical to your version)
+// … (omitted for brevity; paste your existing FlexClientsModal here)
+
 function FlexClientsModal({ open, onClose, cfg, onSave }) {
   const normalizeKey = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
   const asNumber = (v, fallback = 0) => {
@@ -440,7 +499,7 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
             type="number"
             size="small"
             value={local.flexCap}
-            onChange={(e) => setLocal((p) => ({ ...p, flexCap: asNumber(e.target.value, 0) }))}
+            onChange={(e) => setLocal((p) => ({ ...p, flexCap: Number(e.target.value || 0) }))}
           />
           <div style={{ fontSize: 12, opacity: 0.7 }}>Used when a client doesn’t specify a cap.</div>
         </div>
@@ -471,7 +530,7 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
                 type="number"
                 size="small"
                 value={c.start ?? 0}
-                onChange={(e) => updateClient(i, { start: asNumber(e.target.value, 0) })}
+                onChange={(e) => updateClient(i, { start: Number(e.target.value || 0) })}
               />
               <TextField
                 label="Cap (optional)"
@@ -480,7 +539,7 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
                 value={c.cap ?? ""}
                 onChange={(e) => {
                   const raw = e.target.value;
-                  updateClient(i, { cap: raw === "" ? "" : asNumber(raw, "") });
+                  updateClient(i, { cap: raw === "" ? "" : Number(raw || 0) });
                 }}
               />
               <div>
@@ -505,7 +564,7 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
   );
 }
 
-/* ---------------- Budget section (per-table; opens Advanced editor) ---------------- */
+/* ---------------- Budget section ---------------- */
 function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaultFlexCap }) {
   const [menuEl, setMenuEl] = React.useState(null);
   const [collapsed, setCollapsed] = React.useState(false);
@@ -571,7 +630,7 @@ function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaul
                   id: r.id,
                   baseId: r.baseId,
                   source: r.source,
-                  type: r.type,
+                  type: r.type || decideTypeLabel(r),
                   createdAt: r.createdAt,
                   merchant: r.merchant,
                   program: r.program,
@@ -579,7 +638,7 @@ function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaul
                   expenseType: r.expenseType || "",
                   customer: r.customer || "",
                   card: r.card || "",
-                  cardBucket: r.cardBucket || "",
+                  cardBucket: r.card_bucket || r.cardBucket || "",
                   amount: r.amount,
                 }))
               );
@@ -633,7 +692,7 @@ function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaul
                   {roll.rows
                     .sort((a, b2) => new Date(b2.createdAt) - new Date(a.createdAt))
                     .map((r, i) => {
-                      const k = _clientKey(r);
+                      const k = clientKey(r);
                       const toDate = b.type === "yhdp_flex" && k ? (flexSpendByClient.get(k) || 0) : 0;
                       const cap = (k && capByClient.get(k)) || defaultFlexCap;
                       const over = b.type === "yhdp_flex" && cap != null && toDate >= cap;
@@ -641,9 +700,9 @@ function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaul
                       return (
                         <tr key={`${r.id}-${i}`}>
                           <Td>{new Date(r.createdAt).toLocaleString()}</Td>
-                          {b.type === "yhdp_flex" && <Td>{r.billedTo || r.program || "—"}</Td>}
+                          {b.type === "yhdp_flex" && <Td>{r.billedTo || r.billed_to_raw || r.program || "—"}</Td>}
                           <Td title={r.description || ""}>{r.merchant || "—"}</Td>
-                          <Td>{r.expenseType || r.program || "—"}</Td>
+                          <Td>{r.expenseType || r.expense_type_raw || r.program || "—"}</Td>
                           {b.type === "yhdp_flex" && <Td>{r.customer || "—"}</Td>}
                           <Td>${Number(r.amount || 0).toFixed(2)}</Td>
                           {b.type === "yhdp_flex" && <Td>{k ? `$${toDate.toFixed(2)}` : "—"}</Td>}
@@ -664,7 +723,7 @@ function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaul
                               </span>
                             </Td>
                           )}
-                          <Td>{r.type || (r.source === "invoice" ? "Invoice" : r.source || "—")}</Td>
+                          <Td>{r.type || decideTypeLabel(r)}</Td>
                         </tr>
                       );
                     })}
@@ -692,7 +751,7 @@ export default function Budgets() {
   const [slicesOpen, setSlicesOpen] = React.useState(false);
   const [flexModalOpen, setFlexModalOpen] = React.useState(false);
 
-  // Advanced budget editor (single modal for all budgets)
+  // Advanced budget editor
   const [advOpen, setAdvOpen] = React.useState(false);
   const [editKey, setEditKey] = React.useState(null);
   const editingBudget = React.useMemo(
@@ -700,46 +759,76 @@ export default function Budgets() {
     [cfg.budgets, editKey]
   );
 
-  // Default ALL TIME to avoid empty-initial-slice confusion
+  // Default ALL TIME
   const [activeSliceKey, setActiveSliceKey] = React.useState("");
   const activeSlice = (cfg.slices || []).find((s) => s.key === activeSliceKey) || null;
 
-  // Enrich items + canonical program mapping for invoices + derive isFlex
+  // Enrich items with canonical + virtual fields for robust rule matching
   const enriched = React.useMemo(() => {
     return items.map((x) => {
       const isInvoice = (x.source || "").toLowerCase() === "invoice";
-      const exp = String(x.expenseType || "").toLowerCase();
+      const expLower = norm(x.expenseType || "");
+
+      // Canonical program-ish fields
+      const billed_to_raw = x.billedTo || "";
+      const project_raw = x.project || "";
+      // For invoices: If "For a Program" use billed_to_raw as program anchor; else project
       const program_raw = isInvoice
-        ? exp.includes("program")
-          ? (x.billedTo || x.program || x.project || "")
-          : (x.project || x.program || "")
+        ? (expLower.includes("program") ? (billed_to_raw || project_raw) : (project_raw || billed_to_raw || x.program || ""))
         : (x.program || "");
 
-      const progBill = String((program_raw || "") + " " + (x.billedTo || "")).toLowerCase();
-      const cardSource = /^credit-?card$/i.test(x.source || "");
-      const answers = (x?.raw && x.raw.answers) || {};
-      const cardFlexYes =
-        ["204", "205", "206", "207", "208"].some((id) =>
-          String(answers[id]?.answer || "").toLowerCase().startsWith("y")
-        );
+      // Descriptor / service type for customer invoices
+      const descriptor = x.descriptor || x.serviceType || "";
+
+      // Card bucket normalized
+      const card_bucket =
+        (x.card || "").toLowerCase().includes("youth")
+          ? "Youth"
+          : (x.card || "").toLowerCase().includes("housing")
+          ? "Housing"
+          : (x.cardBucket || "");
+
+      // Flex heuristic (keep your true flag first)
+      const rawAnswers = (x?.raw && x.raw.answers) || {};
+      const cardFlexYes = ["204", "205", "206", "207", "208"].some((id) =>
+        String(rawAnswers[id]?.answer || "").toLowerCase().startsWith("y")
+      );
       const isFlex =
         x.isFlex === true ||
-        progBill.includes("yhdp flex") ||
-        progBill.includes("flex") ||
-        (cardSource && exp.includes("customer") && cardFlexYes);
+        norm(program_raw + " " + billed_to_raw).includes("yhdp flex") ||
+        (norm(x.source).includes("credit") && expLower.includes("customer") && cardFlexYes);
+
+      const expense_type_raw = x.expenseType || x.expense_type_raw || "";
+
+      // Virtual rollup text for bucket rules
+      const bucket_text = [
+        program_raw,
+        billed_to_raw,
+        project_raw,
+        descriptor,
+        expense_type_raw,
+        x.card || "",
+        card_bucket,
+        x.merchant || "",
+        x.customer || "",
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
 
       return {
         ...x,
+        // normalized/derived props for rules & tables
+        type: decideTypeLabel(x),
         program_raw,
-        expense_type_raw: x.expenseType || x.expense_type_raw || "",
-        description: x.description || x.merchant || "",
-        card_bucket:
-          (x.card || "").toLowerCase().includes("youth")
-            ? "Youth"
-            : (x.card || "").toLowerCase().includes("housing")
-            ? "Housing"
-            : "",
+        billed_to_raw,
+        project_raw,
+        descriptor,
+        expense_type_raw,
+        card_bucket,
         isFlex,
+        bucket_text,
+        description: x.description || x.merchant || "",
       };
     });
   }, [items]);
@@ -954,7 +1043,7 @@ export default function Budgets() {
         );
       })}
 
-      {/* Advanced editor (single modal for all tables) */}
+      {/* Advanced editor */}
       <AdvancedBudgetEditorModal
         open={advOpen}
         budget={editingBudget}
@@ -983,7 +1072,7 @@ export default function Budgets() {
         />
       )}
 
-      {/* Slices editor (for CREDIT CARD box only) */}
+      {/* Slices editor */}
       {slicesOpen && (
         <SlicesModal
           open

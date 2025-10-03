@@ -19,6 +19,11 @@ self.__BUILD_MANIFEST = {
       "static/chunks/main.js",
       "static/chunks/pages/_error.js"
     ],
+    "/budgets": [
+      "static/chunks/webpack.js",
+      "static/chunks/main.js",
+      "static/chunks/pages/budgets.js"
+    ],
     "/line-items": [
       "static/chunks/webpack.js",
       "static/chunks/main.js",

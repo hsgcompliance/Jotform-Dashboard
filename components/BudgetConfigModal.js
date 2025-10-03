@@ -6,17 +6,24 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 
+/** Fields you can target in rules (now with real “bucket” behavior) */
 const allowedFields = [
+  "bucket_text",      // NEW: scans across program/billedTo/project/descriptor/expense/card/customer/merchant
   "program_raw",
+  "billed_to_raw",
+  "project_raw",
+  "descriptor",
   "expense_type_raw",
   "card_bucket",
-  "description",
   "merchant",
-  "billedTo",
+  "customer",
+  "card",
+  "source",
+  "type",
   "isFlex",
 ];
 
-const emptyLeaf = () => ({ field: "program_raw", match: "", mode: "icontains" });
+const emptyLeaf = () => ({ field: "bucket_text", match: "", mode: "icontains" });
 const emptyGroup = () => ({ op: "OR", rules: [emptyLeaf()] });
 
 const emptyBudget = () => ({
@@ -38,23 +45,25 @@ const isGroup = (node) => node && Array.isArray(node.rules);
 // ---------- Rule leaf row ----------
 function RuleRow({ value, onChange, onRemove }) {
   const v = value || emptyLeaf();
-  const isFlex = v.field === "isFlex";
+  const isFlexField = v.field === "isFlex";
 
   const handleField = (field) => {
     const next = { ...v, field };
-    // if switching to isFlex, force equals + boolean match
     if (field === "isFlex") {
       next.mode = "equals";
       if (next.match !== "true" && next.match !== "false") next.match = "true";
+    } else if (next.mode == null) {
+      next.mode = "icontains";
     }
     onChange(next);
   };
 
   const handleMode = (mode) => onChange({ ...v, mode });
   const handleMatch = (match) => onChange({ ...v, match });
+  const handleNot = (not) => onChange({ ...v, not });
 
   return (
-    <div style={{ display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap" }}>
+    <div style={{ display: "flex", gap: 8, marginBottom: 6, flexWrap: "wrap", alignItems: "center" }}>
       <TextField
         select
         label="Field"
@@ -68,7 +77,7 @@ function RuleRow({ value, onChange, onRemove }) {
         ))}
       </TextField>
 
-      {isFlex ? (
+      {isFlexField ? (
         <>
           <Tooltip title="isFlex only supports equality">
             <TextField
@@ -118,6 +127,12 @@ function RuleRow({ value, onChange, onRemove }) {
           />
         </>
       )}
+
+      <FormControlLabel
+        control={<Switch size="small" checked={!!v.not} onChange={(e) => handleNot(e.target.checked)} />}
+        label="NOT"
+        sx={{ ml: 1 }}
+      />
 
       <Button size="small" onClick={onRemove}>Remove</Button>
     </div>
@@ -177,7 +192,6 @@ export function GroupEditor({ node, onChange, isRoot = false }) {
         </div>
       </div>
 
-      {/* Children */}
       {(n.rules || []).map((child, idx) => (
         <div key={idx} style={{ marginLeft: 6 }}>
           {isGroup(child) ? (
@@ -200,7 +214,6 @@ export function GroupEditor({ node, onChange, isRoot = false }) {
         </div>
       ))}
 
-      {/* Adders */}
       <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
         <Button size="small" variant="outlined" onClick={addLeaf}>Add Rule</Button>
         <Button size="small" variant="outlined" onClick={addGroup}>Add Group</Button>
@@ -281,7 +294,7 @@ export default function BudgetConfigModal({ open, onClose, cfg, onSave }) {
                 size="small"
                 value={b.type}
                 onChange={(e) => updateBudget(i, { type: e.target.value })}
-                sx={{ minWidth: 200 }}
+                sx={{ minWidth: 220 }}
               >
                 <MenuItem value="standard">Standard</MenuItem>
                 <MenuItem value="yhdp_flex">YHDP FLEX (show client & billed-to)</MenuItem>
@@ -319,9 +332,12 @@ export default function BudgetConfigModal({ open, onClose, cfg, onSave }) {
               <Button color="error" onClick={() => removeBudget(i)}>Remove Budget</Button>
             </div>
 
-            {/* Advanced nested rules: treat top-level as a group {op: rulesOp, rules} */}
+            {/* Advanced nested rules */}
             <div style={{ marginTop: 12 }}>
               <div style={{ fontWeight: 600, marginBottom: 6 }}>Rules (nested)</div>
+              <div style={{ fontSize: 12, opacity: 0.7, marginBottom: 6 }}>
+                Tip: use <code>bucket_text</code> to match across Program / Billed To / Project / Descriptor / Expense Type / Card / Merchant / Customer.
+              </div>
               <GroupEditor
                 isRoot
                 node={{ op: b.rulesOp || "OR", rules: b.rules || [] }}
@@ -394,4 +410,3 @@ export default function BudgetConfigModal({ open, onClose, cfg, onSave }) {
     </Dialog>
   );
 }
-

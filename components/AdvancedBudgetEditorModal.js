@@ -4,8 +4,6 @@ import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   Button, TextField, MenuItem
 } from "@mui/material";
-// If you kept GroupEditor inside BudgetConfigModal, export it from there:
-// export { GroupEditor } from "./BudgetConfigModal";
 import { GroupEditor } from "./BudgetConfigModal"; // reuse the nested editor
 
 export default function AdvancedBudgetEditorModal({ open, budget, onClose, onSave }) {
@@ -23,13 +21,15 @@ export default function AdvancedBudgetEditorModal({ open, budget, onClose, onSav
           <TextField label="Label" size="small" value={local.label}
             onChange={(e)=> setLocal({ ...local, label: e.target.value })} />
           <TextField select label="Type" size="small" value={local.type}
-            onChange={(e)=> setLocal({ ...local, type: e.target.value })} sx={{ minWidth: 200 }}>
+            onChange={(e)=> setLocal({ ...local, type: e.target.value })} sx={{ minWidth: 220 }}>
             <MenuItem value="standard">Standard</MenuItem>
             <MenuItem value="yhdp_flex">YHDP FLEX (show client & billed-to)</MenuItem>
           </TextField>
-          <TextField type="date" label="From" size="small" InputLabelProps={{ shrink: true }}
+          <TextField type="date" label="From" size="small"
+            slotProps={{ inputLabel: { shrink: true } }}
             value={local.from} onChange={(e)=> setLocal({ ...local, from: e.target.value })} />
-          <TextField type="date" label="To" size="small" InputLabelProps={{ shrink: true }}
+          <TextField type="date" label="To" size="small"
+            slotProps={{ inputLabel: { shrink: true } }}
             value={local.to} onChange={(e)=> setLocal({ ...local, to: e.target.value })} />
           <TextField type="number" label="Budget" size="small" value={local.budget}
             onChange={(e)=> setLocal({ ...local, budget: Number(e.target.value||0) })} />

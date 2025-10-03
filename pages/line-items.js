@@ -3,6 +3,14 @@ import React from "react";
 import useSWR from "swr";
 import { bucketCard } from "../components/jotformMap";
 import {
+  CC_SCHEMA,
+  INVOICE_SCHEMA,
+  getAns,
+  iterateCreditCardTxns,
+  resolveInvoice,
+} from "../components/formSchemas";
+
+import {
   Button,
   TextField,
   MenuItem,
@@ -19,24 +27,55 @@ import CloseIcon from "@mui/icons-material/Close";
 /* ---------------- fetch ---------------- */
 const fetcher = (u) => fetch(u).then((r) => r.json());
 
-const within = (iso, from, to) => {
-  const t = new Date(iso).getTime();
-  if (from) { const f = new Date(from + "T00:00:00").getTime(); if (t < f) return false; }
-  if (to)   { const tt = new Date(to   + "T23:59:59").getTime(); if (t > tt) return false; }
-  return true;
-};
-
 /* ---------------- helpers ---------------- */
 const stripHtml = (s = "") => String(s).replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
+
+/** Decide if row represents an invoice */
+function isInvoiceRow(row) {
+  if ((row?.source || "").toLowerCase() === "invoice") return true;
+  if (row?._type?.key === "invoice") return true;
+  // fallback heuristic
+  return false;
+}
+
+/** Robust-ish date getter used for display, filtering and sorting */
+function rowDateStr(row) {
+  // Invoices: prefer Invoice Date (31.prettyFormat) → createdAt → raw.created_at
+  if (isInvoiceRow(row)) {
+    const ans = row?.raw?.answers || {};
+    const pretty = (id) => ans?.[id]?.prettyFormat || "";
+    const inv = pretty(INVOICE_SCHEMA.globals.invoiceDate);
+    if (inv) return inv; // e.g., "MM/DD/YYYY"
+    return row?.createdAt || row?.raw?.created_at || "";
+  }
+  // Credit cards: createdAt (return time can be buggy)
+  return row?.createdAt || row?.raw?.created_at || "";
+}
+
+/** Filtering helper uses rowDateStr */
+const within = (row, from, to) => {
+  const s = rowDateStr(row);
+  const t = new Date(s).getTime();
+  if (Number.isNaN(t)) return false;
+  if (from) {
+    const f = new Date(from + "T00:00:00").getTime();
+    if (t < f) return false;
+  }
+  if (to) {
+    const tt = new Date(to + "T23:59:59").getTime();
+    if (t > tt) return false;
+  }
+  return true;
+};
 
 function getSubmittedBy(row) {
   if (row.purchaser && String(row.purchaser).trim()) return row.purchaser;
   if (row.submitter && String(row.submitter).trim()) return row.submitter;
   const byId = row?.raw?.answers || {};
   const fromId = (id) => byId?.[id]?.answer ?? byId?.[id]?.prettyFormat ?? "";
-  const ccName = fromId("55"); // CC form name (fallback)
+  const ccName = fromId(CC_SCHEMA.globals.purchaserName);
   if (ccName) return String(ccName).trim();
-  const invPurchaser = fromId("33"); // Invoice purchaser (fallback)
+  const invPurchaser = fromId(INVOICE_SCHEMA.globals.purchaser);
   if (invPurchaser) return String(invPurchaser).trim();
   return "";
 }
@@ -44,49 +83,22 @@ function getSubmittedBy(row) {
 function decideType(row) {
   if ((row.source || "").toLowerCase() === "invoice") return { key: "invoice", label: "Invoice" };
   const cardName = row.card || row.cardLabel || "";
-  const bucket = bucketCard(cardName); // "Housing" | "Youth" | ""
+  const bucket = bucketCard(cardName);
   if (bucket === "Youth") return { key: "youth", label: "Youth Card" };
   if (bucket === "Housing") return { key: "housing", label: "Housing Card" };
   return { key: "card", label: "Card" };
 }
 
-/** Display date rules
- * Invoice: Invoice date (31.prettyFormat) || createdAt
- * CC: createdAt (we keep return time as a separate field in the structured section)
- */
+/** Single source of truth for displayed date */
 function displayDate(row) {
-  const answers = row?.raw?.answers || {};
-  const pretty = (id) => answers?.[id]?.prettyFormat || "";
-  if (row._type?.key === "invoice") {
-    const inv = pretty("31");
-    return inv || row.createdAt || row?.raw?.created_at || "";
-  } else {
-    return row.createdAt || row?.raw?.created_at || "";
-  }
+  return rowDateStr(row);
 }
 
 /** Prefer normalized flag first; fallback to heuristic */
 function isYHDPFlex(row) {
-  if (row?.isFlex === true) return true;
+  if (row?.isFlex === true || row?.submissionIsFlex === true) return true;
   const s = (row.descriptor || row.serviceType || row.program || "").toLowerCase();
   return s.includes("flex") && s.includes("yhdp");
-}
-
-function docStatus(row) {
-  const ans = row?.raw?.answers || {};
-  const hasArray = (id) => Array.isArray(ans[id]?.answer) && ans[id].answer.length > 0;
-  const isInvoice = /^invoice$/i.test(row._type?.key);
-  if (isInvoice) {
-    const hasReceipt = hasArray("7");
-    const okCore = !!row.merchant && !!row.amount && !!row.program && !!(row.purchaser || getSubmittedBy(row));
-    return { complete: okCore && hasReceipt, missing: { receipt: !hasReceipt } };
-  } else {
-    // Credit card uploads: first txn 70, others 109/117/125/133
-    const uploadIds = ["70","109","117","125","133"];
-    const hasAny = uploadIds.some(hasArray);
-    const okCore = !!row.merchant && !!row.amount && !!row.expenseType;
-    return { complete: okCore && hasAny, missing: { receipt: !hasAny } };
-  }
 }
 
 function saveAs(url, filename) {
@@ -103,31 +115,6 @@ function saveAs(url, filename) {
   }
 }
 
-/** Heuristic: cleanly separate Program vs Billed To for invoices, with normalized fields first */
-function splitProgramAndBilledTo(row) {
-  // Prefer normalized first
-  let billedTo = row.billedTo || "";
-  let program = row.program || row.project || "";
-
-  // If only one is present, try to infer from raw text patterns
-  const looksLikeBillTo = (s) => /bill(?:ed)?\s*to\s*:?/i.test(String(s || ""));
-  if (!billedTo && looksLikeBillTo(program)) {
-    billedTo = String(program).replace(/bill(?:ed)?\s*to\s*:?\s*/i, "").trim();
-    program = row.project || ""; // shift program to project when available
-  }
-
-  // De-dupe if identical
-  if (program && billedTo && program.trim().toLowerCase() === billedTo.trim().toLowerCase()) {
-    // Keep program, drop duplicate billedTo
-    billedTo = "";
-  }
-
-  return {
-    program: program || "—",
-    billedTo: billedTo || "—",
-  };
-}
-
 /* --------- colors (chips) --------- */
 const typeChipStyles = (key) => {
   switch (key) {
@@ -138,83 +125,47 @@ const typeChipStyles = (key) => {
   }
 };
 
-const expenseChipStyles = (label = "") => {
-  const s = String(label).toLowerCase();
-  if (s.includes("client")|| s.includes("customer"))  return { bgcolor: "#e6f4ea", color: "#0b5", borderColor: "#bde5cc" };
-  if (s.includes("program")) return { bgcolor: "#e8f0fe", color: "#174ea6", borderColor: "#bcd0ff" };
-  if (s.includes("flex"))    return { bgcolor: "#fff0f6", color: "#b00063", borderColor: "#ffc2db" };
-  return { bgcolor: "#eef2f7", color: "#374151", borderColor: "#d7dde5" };
-};
+const pill = (text, hint, danger) => (
+  <span
+    title={hint || ""}
+    style={{
+      padding: "1px 8px",
+      borderRadius: 999,
+      border: "1px solid",
+      borderColor: danger ? "#f5c2c7" : "#bcd0ff",
+      background: danger ? "#fff5f5" : "#eef5ff",
+      fontSize: 12,
+      whiteSpace: "nowrap",
+    }}
+  >
+    {text}
+  </span>
+);
 
-/* ---------------- CC Structured View ---------------- */
-/** Keep your multi-transaction layout, but be tolerant with missing answers/files */
+/* ---------------- CC Structured View (schema-driven) ---------------- */
 function CCStructuredSubmissionView({ answers = {}, subId }) {
-  const byId = answers || {};
-  const ans = (id) => byId?.[id]?.answer ?? byId?.[id]?.prettyFormat ?? "";
+  const a = (id) => getAns(answers, id);
 
-  const nonEmpty = (v) => {
-    if (v == null) return false;
-    if (typeof v === "string") return v.trim() !== "";
-    if (Array.isArray(v)) return v.length > 0;
-    if (typeof v === "object") return Object.keys(v).length > 0;
-    return true;
-  };
-
-  // summary
-  const card = ans("33");
-  const purchaser = ans("55") || ans("185");
-  const email = ans("56") || "";
-  const whatPurchased = ans("85") || ans("167");
-  const returnTime = byId?.["28"]?.prettyFormat || "";
+  // Header summary (card can be blank if workflow bypass)
+  const card = a(CC_SCHEMA.globals.cardChoice) || "Card";
+  const purchaser = a(CC_SCHEMA.globals.purchaserName);
+  const email = a(CC_SCHEMA.globals.email);
+  const whatPurchased = a("85") || a("167"); // legacy “purpose” helper
   const summaryLines = [
     purchaser ? `Purchaser: ${purchaser}` : "",
     card ? `Card charged: ${card}` : "",
     whatPurchased ? `What was purchased?: ${whatPurchased}` : "",
-    returnTime ? `Card return time: ${returnTime}` : "",
   ].filter(Boolean);
 
-  // five slots, consistent with existing CC form
-  const slots = [
-    { n: 1, m: "82",  p: "85",  e: "84",  sup: "169", cust: "156", cost: "86",  files: "70",  notes: "151" },
-    { n: 2, m: "182", p: "106", e: "183", sup: "184", cust: "185", cost: "107", files: "109", notes: "143" },
-    { n: 3, m: "187", p: "114", e: "188", sup: "189", cust: "190", cost: "115", files: "117", notes: "147" },
-    { n: 4, m: "192", p: "122", e: "193", sup: "194", cust: "195", cost: "123", files: "125", notes: "—" },
-    { n: 5, m: "197", p: "130", e: "198", sup: "199", cust: "200", cost: "131", files: "133", notes: "—" },
-  ];
-
-  const sections = slots.map((s) => {
-    const merchant = ans(s.m);
-    const purpose = ans(s.p);
-    const expenseType = ans(s.e);
-    const supportive = ans(s.sup);
-    const customer = ans(s.cust);
-    const cost = ans(s.cost);
-    const fileAns = ans(s.files);
-    const files = Array.isArray(fileAns) ? fileAns : fileAns ? [fileAns] : [];
-    const notes = s.notes !== "—" ? ans(s.notes) : "";
-
-    const rows = [
-      { label: "Merchant", value: merchant },
-      { label: "Purpose", value: purpose },
-      { label: "Expense Type", value: expenseType },
-      { label: "Supportive Services Program", value: supportive },
-      { label: "Customer Name", value: customer },
-      { label: "Cost", value: cost },
-      { label: "Files", value: files },
-      { label: "Notes", value: notes },
-    ].filter((r) => nonEmpty(r.value));
-
-    const hasCost = nonEmpty(cost);
-    const hasAny = rows.length > 0;
-    return { n: s.n, rows, show: hasAny && hasCost };
-  });
-
-  const hasAnySection = sections.some((sec) => sec.show);
+  const txns = Array.from(iterateCreditCardTxns(answers));
+  const anyFlex = txns.some((t) => t.isFlexTxn);
 
   return (
     <div style={{ display: "grid", gap: 14 }}>
       <div style={{ border: "1px solid #eee", borderRadius: 10, padding: 12, background: "#f9fbff" }}>
-        <div style={{ fontWeight: 700, marginBottom: 6 }}>Card Checkout Summary</div>
+        <div style={{ fontWeight: 700, marginBottom: 6 }}>
+          Card Checkout Summary {anyFlex && pill("YHDP Flex (submission)", "At least one transaction marked Flex")}
+        </div>
         {summaryLines.length ? (
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {summaryLines.map((l, i) => (
@@ -231,84 +182,148 @@ function CCStructuredSubmissionView({ answers = {}, subId }) {
         ) : null}
       </div>
 
-      {hasAnySection ? (
-        sections.filter((sec) => sec.show).map((sec) => (
-          <div key={sec.n} style={{ border: "1px solid #eee", borderRadius: 10, padding: 12, background: "#fff" }}>
-            <div style={{ fontWeight: 700, marginBottom: 8 }}>{`Transaction ${sec.n}`}</div>
+      {txns.length ? txns.map((t, i) => {
+        const programFieldUsed = t.supportiveProgram ? "Supportive Services Program" :
+                                 t.programOperations ? "Program Operations for" : "Program";
+        return (
+          <div key={i} style={{ border: "1px solid #eee", borderRadius: 10, padding: 12, background: "#fff" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+              <div style={{ fontWeight: 700 }}>Transaction {t.n}</div>
+              {t.isFlexTxn && pill("YHDP Flex", "Txn flagged Flex")}
+            </div>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
               <tbody>
-                {sec.rows.map((r, idx) => (
-                  <tr key={idx}>
-                    <td style={{ width: 220, padding: "6px 8px", fontWeight: 600, verticalAlign: "top" }}>
-                      {r.label}
-                    </td>
-                    <td style={{ padding: "6px 8px" }}>
-                      {Array.isArray(r.value)
-                        ? r.value.map((u, i) => (
-                            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                              <span>{String(u).split("/").pop()}</span>
-                              <Button
-                                size="small"
-                                variant="outlined"
-                                onClick={() => saveAs(u, `${subId}-t${sec.n}-${i}.pdf`)}
-                              >
-                                Download
-                              </Button>
-                            </div>
-                          ))
-                        : r.label === "Cost"
-                        ? `$${Number(r.value).toFixed(2)}`
-                        : String(r.value)}
+                <Row label="Merchant" value={t.merchant} />
+                <Row label="Purpose" value={t.purpose} />
+                <Row label="Expense Type" value={t.expenseType} />
+                <Row label={programFieldUsed} value={t.supportiveProgram || t.programOperations} />
+                <Row label="Customer Name" value={t.customer} />
+                <Row label="Cost" value={t.amount ? `$${Number(t.amount).toFixed(2)}` : ""} />
+                {!!(t.files || []).length && (
+                  <tr>
+                    <td style={thCell}>Files</td>
+                    <td style={tdCell}>
+                      {(t.files || []).map((u, j) => (
+                        <div key={j} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                          <span>{String(u).split("/").pop()}</span>
+                          <Button size="small" variant="outlined" onClick={() => saveAs(u, `${subId}-t${t.n}-${j}.pdf`)}>
+                            Download
+                          </Button>
+                        </div>
+                      ))}
                     </td>
                   </tr>
-                ))}
+                )}
+                <Row label="Notes" value={getAns(answers, CC_SCHEMA.transactions[t.n - 1].notes)} />
               </tbody>
             </table>
           </div>
-        ))
-      ) : (
+        );
+      }) : (
         <div style={{ fontSize: 13, opacity: 0.7 }}>No transactions found.</div>
       )}
     </div>
   );
 }
 
-/* ---------------- Invoice Structured View ---------------- */
+/* ---------------- Invoice Structured View (schema-driven) ---------------- */
 function InvoiceStructuredView({ row }) {
-  const { program, billedTo } = splitProgramAndBilledTo(row);
+  const answers = row?.raw?.answers || {};
+  const soln = resolveInvoice(answers);
 
-  // Prefer normalized fields where available; fall back to raw answers
-  const byId = row?.raw?.answers || {};
-  const a = (id) => byId?.[id]?.answer ?? byId?.[id]?.prettyFormat ?? "";
+  const a = (id) => getAns(answers, id);
+  const first = a(INVOICE_SCHEMA.globals.firstName);
+  const last = a(INVOICE_SCHEMA.globals.lastName);
+  const vendor = a(INVOICE_SCHEMA.globals.vendor);
+  const serviceType = soln.serviceType || "";
+  const otherService = soln.otherService || "";
+  const files = soln.files_typed?.all || [];
 
-  const fields = [
-    ["Invoice Date", displayDate(row)],
-    ["Vendor", row.merchant || a("30") || "—"],
-    ["Expense Type", row.expenseType || "—"],
-    ["Program", program],
-    ["Billed To", billedTo],
-    ["Customer", row.customer || "—"],
-    ["Purchaser", row.purchaser || getSubmittedBy(row) || "—"],
-    ["Email", row.email || a("25") || "—"],
-    ["Payment Method", row.paymentMethod || "—"],
-    ["Amount", `$${Number(row.amount || 0).toFixed(2)}`],
-  ];
+  const showWIOA = !!a(INVOICE_SCHEMA.globals.wioaScopeWex);
+  const scope = soln.serviceScope || "";
+  const wex = soln.wex || "";
 
-  const files = Array.isArray(row.files) ? row.files : [];
+  // Totals logic: Cost (17) should equal sum of splits when multi
+  const cost17 = Number(String(a(INVOICE_SCHEMA.globals.costSingle) ?? "0").replace(/[$,]/g, "")) || 0;
+  const splits = Array.isArray(soln.splits) ? soln.splits : [];
+  const splitTotal = splits.reduce((acc, s) => acc + Number(s.amount || 0), 0);
+  const isMulti = splits.length > 0 && soln.path === "program";
+  const mismatch = isMulti && Math.abs(cost17 - splitTotal) > 0.009;
 
   return (
     <div style={{ display: "grid", gap: 12 }}>
+      {/* Summary top table */}
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <tbody>
-          {fields.map(([label, value]) => (
-            <tr key={label}>
-              <td style={{ width: 220, padding: "6px 8px", fontWeight: 600, verticalAlign: "top" }}>{label}</td>
-              <td style={{ padding: "6px 8px" }}>{String(value)}</td>
-            </tr>
-          ))}
+          <Row label="Invoice Date" value={displayDate(row)} />
+          <Row label="Vendor" value={row.merchant || vendor || "—"} />
+          <Row label="Expense Type" value={row.expenseType || "—"} />
+          {soln.path === "customer" ? (
+            <>
+              <Row label="Project" value={soln.project || soln.projectOther || "—"} />
+              <Row label="Program (resolved)" value={soln.program || "—"} />
+              <Row label="Customer" value={row.customer || [first, last].filter(Boolean).join(" ") || "—"} />
+              <Row label="Service Type" value={serviceType || "—"} />
+              {/other/i.test(serviceType) && <Row label="Other Service" value={otherService || "—"} />}
+              {showWIOA && (
+                <Row label="WIOA Scope / WEX" value={[scope, wex].filter(Boolean).join(" • ") || "—"} />
+              )}
+              <Row label="Payment Method" value={row.paymentMethod || a(INVOICE_SCHEMA.globals.paymentMethod) || "—"} />
+              <Row label="Amount" value={`$${Number(row.amount || 0).toFixed(2)}`} />
+            </>
+          ) : (
+            <>
+              <Row label="Bill to Multiple Grants?" value={a(INVOICE_SCHEMA.programPath.multiToggle) || "—"} />
+              <Row label="Primary Program (resolved)" value={soln.program || "—"} />
+              {showWIOA && (
+                <Row label="WIOA Scope / WEX" value={[scope, wex].filter(Boolean).join(" • ") || "—"} />
+              )}
+              <Row label="Payment Method" value={row.paymentMethod || a(INVOICE_SCHEMA.globals.paymentMethod) || "—"} />
+            </>
+          )}
+          <Row label="Purchaser" value={row.purchaser || getSubmittedBy(row) || "—"} />
+          <Row label="Email" value={row.email || a(INVOICE_SCHEMA.globals.email) || "—"} />
+          <Row label="Note" value={row.note || a(INVOICE_SCHEMA.globals.note) || ""} />
+          {/* Totals section always visible */}
+          <Row label="Total Cost" value={`$${cost17.toFixed(2)}`} />
+          {isMulti && (
+            <Row
+              label="Split Total"
+              value={
+                <>
+                  ${splitTotal.toFixed(2)}{" "}
+                  {mismatch && pill("Mismatch", "Sum of splits != Cost (17)", true)}
+                </>
+              }
+            />
+          )}
         </tbody>
       </table>
 
+      {/* Splits table (Program path) */}
+      {isMulti && (
+        <div style={{ marginTop: 6 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>Grant Splits</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+            <thead>
+              <tr>
+                <th style={thCell}>Billed To</th>
+                <th style={thCell}>Amount</th>
+              </tr>
+            </thead>
+            <tbody>
+              {splits.map((s, i) => (
+                <tr key={i}>
+                  <td style={tdCell}>{s.billedTo || s.program || "—"}</td>
+                  <td style={tdCell}>${Number(s.amount || 0).toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Files */}
       {files.length > 0 && (
         <div style={{ marginTop: 6 }}>
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Files</div>
@@ -329,6 +344,19 @@ function InvoiceStructuredView({ row }) {
     </div>
   );
 }
+
+/* ---------------- table row cell helpers ---------------- */
+const thCell = { width: 220, padding: "6px 8px", fontWeight: 600, verticalAlign: "top", textAlign: "left", borderBottom: "1px solid #eee" };
+const tdCell = { padding: "6px 8px", verticalAlign: "top", borderBottom: "1px solid #f4f4f4" };
+const Row = ({ label, value }) => {
+  if (value == null || (typeof value === "string" && value.trim() === "")) return null; // Hide blank fields
+  return (
+    <tr>
+      <td style={thCell}>{label}</td>
+      <td style={tdCell}>{typeof value === "string" ? value : <>{value}</>}</td>
+    </tr>
+  );
+};
 
 /* ---------------- Main page ---------------- */
 export default function LineItems() {
@@ -359,28 +387,33 @@ export default function LineItems() {
 
   const filtered = React.useMemo(() => {
     const txt = q.toLowerCase();
+
     return items
       .map((r) => {
         const type = decideType(r);
         const submittedBy = getSubmittedBy(r);
         const email =
           r.email ||
-          (r?.raw?.answers?.["56"]?.answer ?? r?.raw?.answers?.["25"]?.answer ?? ""); // CC email(56) | Invoice email(25)
+          (r?.raw?.answers?.[CC_SCHEMA.globals.email]?.answer ??
+           r?.raw?.answers?.[INVOICE_SCHEMA.globals.email]?.answer ??
+           "");
         return {
           ...r,
           _type: type, // {key,label}
           _submittedBy: submittedBy || "—",
           _email: email || "—",
+          _displayDate: rowDateStr(r), // cache for sort/filter/table cell
         };
       })
       .filter((r) => (typeFilter === "all" ? true : r._type.key === typeFilter))
-      .filter((r) => within(r.createdAt, from, to))
+      .filter((r) => within(r, from, to))
       .filter((r) => !txt || JSON.stringify(r).toLowerCase().includes(txt))
-      .sort((a, b) =>
-        sort === "desc"
-          ? new Date(b.createdAt) - new Date(a.createdAt)
-          : new Date(a.createdAt) - new Date(b.createdAt)
-      );
+      .sort((a, b) => {
+        const ta = new Date(a._displayDate).getTime();
+        const tb = new Date(b._displayDate).getTime();
+        const delta = (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
+        return sort === "desc" ? delta : -delta;
+      });
   }, [items, q, from, to, sort, typeFilter]);
 
   return (
@@ -427,19 +460,14 @@ export default function LineItems() {
             {filtered.map((r, idx) => {
               const rowId = `${r.id}-${idx}`;
               const typeStyle = typeChipStyles(r._type.key);
-              const expStyle = expenseChipStyles(r.expenseType);
               return (
                 <tr key={rowId}>
-                  <Td title={displayDate(r)}>{displayDate(r)}</Td>
+                  <Td title={displayDate(r)}>{r._displayDate}</Td>
                   <Td>
                     <Chip size="small" variant="outlined" sx={{ ...typeStyle, borderWidth: 1 }} label={r._type.label} />
                   </Td>
                   <Td>{r.merchant || "—"}</Td>
-                  <Td>
-                    {r.expenseType
-                      ? <Chip size="small" variant="outlined" sx={{ ...expStyle, borderWidth: 1 }} label={r.expenseType} />
-                      : "—"}
-                  </Td>
+                  <Td>{r.expenseType || "—"}</Td>
                   <Td>{r.program || "—"}</Td>
                   <Td>{r.card || "—"}</Td>
                   <Td>{r.customer || "—"}</Td>
@@ -512,6 +540,7 @@ export default function LineItems() {
                 <b>Type: </b>{modalRow._type?.label} &nbsp; | &nbsp;
                 <b>Amount: </b>${Number(modalRow.amount || 0).toFixed(2)} &nbsp; | &nbsp;
                 <b>Submitted By: </b>{getSubmittedBy(modalRow) || "—"}
+                {isYHDPFlex(modalRow) && <span style={{ marginLeft: 8 }}>{pill("YHDP Flex")}</span>}
               </div>
 
               <Tabs value={modalTab} onChange={(_, v) => setModalTab(v)} aria-label="submission tabs" sx={{ mb: 1 }}>
@@ -521,7 +550,7 @@ export default function LineItems() {
               </Tabs>
 
               {modalTab === 0 && (
-                (modalRow._type?.key === "invoice")
+                (isInvoiceRow(modalRow))
                   ? <InvoiceStructuredView row={modalRow} />
                   : <CCStructuredSubmissionView answers={modalRow.raw?.answers || {}} subId={modalRow.baseId || modalRow.id} />
               )}
