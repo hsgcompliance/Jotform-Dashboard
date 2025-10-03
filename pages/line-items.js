@@ -21,8 +21,14 @@ import {
   Tabs,
   Tab,
   Chip,
+  Tooltip,
+  Select,
+  InputLabel,
+  FormControl,
+  DialogActions,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
+import FilterAltIcon from "@mui/icons-material/FilterAlt";
 
 /* ---------------- fetch ---------------- */
 const fetcher = (u) => fetch(u).then((r) => r.json());
@@ -34,7 +40,6 @@ const stripHtml = (s = "") => String(s).replace(/<[^>]*>/g, "").replace(/\s+/g, 
 function isInvoiceRow(row) {
   if ((row?.source || "").toLowerCase() === "invoice") return true;
   if (row?._type?.key === "invoice") return true;
-  // fallback heuristic
   return false;
 }
 
@@ -43,9 +48,8 @@ function rowDateStr(row) {
   // Invoices: prefer Invoice Date (31.prettyFormat) → createdAt → raw.created_at
   if (isInvoiceRow(row)) {
     const ans = row?.raw?.answers || {};
-    const pretty = (id) => ans?.[id]?.prettyFormat || "";
-    const inv = pretty(INVOICE_SCHEMA.globals.invoiceDate);
-    if (inv) return inv; // e.g., "MM/DD/YYYY"
+    const inv = ans?.[INVOICE_SCHEMA.globals.invoiceDate]?.prettyFormat || "";
+    if (inv) return inv;
     return row?.createdAt || row?.raw?.created_at || "";
   }
   // Credit cards: createdAt (return time can be buggy)
@@ -285,7 +289,7 @@ function InvoiceStructuredView({ row }) {
           <Row label="Email" value={row.email || a(INVOICE_SCHEMA.globals.email) || "—"} />
           <Row label="Note" value={row.note || a(INVOICE_SCHEMA.globals.note) || ""} />
           {/* Totals section always visible */}
-          <Row label="Total Cost" value={`$${cost17.toFixed(2)}`} />
+          <Row label="Total Cost (17)" value={`$${cost17.toFixed(2)}`} />
           {isMulti && (
             <Row
               label="Split Total"
@@ -358,9 +362,41 @@ const Row = ({ label, value }) => {
   );
 };
 
+/* ---------------- Rule matching (same semantics as Budgets) ---------------- */
+const norm = (s) => String(s || "").toLowerCase().trim();
+const valOf = (it, field) => {
+  switch (field) {
+    case "program_raw":      return String(it.program_raw || "");
+    case "expense_type_raw": return String(it.expense_type_raw || "");
+    case "card_bucket":      return String(it.card_bucket || "");
+    case "description":      return String(it.description || "");
+    case "merchant":         return String(it.merchant || "");
+    case "billedTo":         return String(it.billedTo || "");
+    case "isFlex":           return String(it.isFlex === true || it.submissionIsFlex === true);
+    default:                 return String(it[field] ?? "");
+  }
+};
+const matchLeaf = (it, r) => {
+  const v = norm(valOf(it, r.field));
+  const m = norm(r.match ?? "");
+  const mode = r.mode || "icontains";
+  let ok = m ? (mode === "equals" ? v === m : v.includes(m)) : false;
+  return r.not ? !ok : ok;
+};
+const matchesRules = (it, node, op = "OR") => {
+  if (!node) return false;
+  const rules = node.rules || [];
+  if (!rules.length) return false;
+  const evalRule = (x) => (x.rules ? matchesRules(it, x, x.op || "OR") : matchLeaf(it, x));
+  const isAnd = (op || "OR").toUpperCase() === "AND";
+  return isAnd ? rules.every(evalRule) : rules.some(evalRule);
+};
+
 /* ---------------- Main page ---------------- */
 export default function LineItems() {
   const { data, error, isLoading, mutate } = useSWR("/api/purchases", fetcher, { refreshInterval: 300000 });
+  const { data: cfgRes } = useSWR("/api/budget-config", fetcher); // for secret bucket filter
+  const cfg = (cfgRes && cfgRes.config) ? cfgRes.config : { budgets: [] };
 
   const [q, setQ] = React.useState("");
   const [from, setFrom] = React.useState("");
@@ -371,50 +407,109 @@ export default function LineItems() {
   const [modalRow, setModalRow] = React.useState(null);
   const [modalTab, setModalTab] = React.useState(0); // 0 structured, 1 raw item, 2 raw submission
 
+  // secret bucket filter UI state
+  const [bucketOpen, setBucketOpen] = React.useState(false);
+  const [bucketKey, setBucketKey] = React.useState("");         // applied
+  const [bucketPick, setBucketPick] = React.useState("");       // in dialog
+
   const items = data?.items || [];
+
+  // Enrich rows so rule engine sees the same fields Budgets uses
+  const enriched = React.useMemo(() => {
+    return items.map((x) => {
+      const isInvoice = (x.source || "").toLowerCase() === "invoice";
+      const exp = String(x.expenseType || "").toLowerCase();
+
+      // Canonical program_raw, consistent with Budgets page
+      const program_raw = isInvoice
+        ? (exp.includes("program")
+            ? (x.billedTo || x.program || x.project || "")
+            : (x.project || x.program || ""))
+        : (x.program || "");
+
+      const card_bucket =
+        (x.card || "").toLowerCase().includes("youth")
+          ? "Youth"
+          : (x.card || "").toLowerCase().includes("housing")
+          ? "Housing"
+          : (x.cardBucket || "");
+
+      // Heuristic isFlex (keep normalized flags if present)
+      const progBill = String((program_raw || "") + " " + (x.billedTo || "")).toLowerCase();
+      const isFlex =
+        x.isFlex === true ||
+        x.submissionIsFlex === true ||
+        progBill.includes("yhdp flex") ||
+        progBill.includes("flex");
+
+      return {
+        ...x,
+        program_raw,
+        expense_type_raw: x.expenseType || "",
+        description: x.description || x.merchant || "",
+        card_bucket,
+        isFlex,
+        _type: decideType(x),
+        _displayDate: rowDateStr(x),
+        _submittedBy: getSubmittedBy(x) || "—",
+        _email:
+          x.email ||
+          (x?.raw?.answers?.[CC_SCHEMA.globals.email]?.answer ??
+           x?.raw?.answers?.[INVOICE_SCHEMA.globals.email]?.answer ??
+           "—"),
+      };
+    });
+  }, [items]);
 
   // Totals for YHDP Flex by client (based on normalized flags when possible)
   const flexSpendByClient = React.useMemo(() => {
     const acc = new Map();
-    for (const r of items) {
+    for (const r of enriched) {
       if (!r?.customer) continue;
       if (!isYHDPFlex(r)) continue;
       const key = String(r.customer).trim().toLowerCase();
       acc.set(key, (acc.get(key) || 0) + Number(r.amount || 0));
     }
     return acc;
-  }, [items]);
+  }, [enriched]);
 
-  const filtered = React.useMemo(() => {
+  // First apply type/date/search; then optional bucket rules
+  const baseRows = React.useMemo(() => {
     const txt = q.toLowerCase();
-
-    return items
-      .map((r) => {
-        const type = decideType(r);
-        const submittedBy = getSubmittedBy(r);
-        const email =
-          r.email ||
-          (r?.raw?.answers?.[CC_SCHEMA.globals.email]?.answer ??
-           r?.raw?.answers?.[INVOICE_SCHEMA.globals.email]?.answer ??
-           "");
-        return {
-          ...r,
-          _type: type, // {key,label}
-          _submittedBy: submittedBy || "—",
-          _email: email || "—",
-          _displayDate: rowDateStr(r), // cache for sort/filter/table cell
-        };
-      })
+    return enriched
       .filter((r) => (typeFilter === "all" ? true : r._type.key === typeFilter))
       .filter((r) => within(r, from, to))
-      .filter((r) => !txt || JSON.stringify(r).toLowerCase().includes(txt))
-      .sort((a, b) => {
+      .filter((r) => !txt || JSON.stringify(r).toLowerCase().includes(txt));
+  }, [enriched, q, from, to, typeFilter]);
+
+  const filtered = React.useMemo(() => {
+    if (!bucketKey) {
+      return baseRows.sort((a, b) => {
         const ta = new Date(a._displayDate).getTime();
         const tb = new Date(b._displayDate).getTime();
         const delta = (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
         return sort === "desc" ? delta : -delta;
       });
-  }, [items, q, from, to, sort, typeFilter]);
+    }
+    const budget = (cfg.budgets || []).find((b) => b.key === bucketKey);
+    const root = budget ? { op: budget.rulesOp || "OR", rules: budget.rules || [] } : null;
+    const rows = root ? baseRows.filter((r) => matchesRules(r, root, root.op)) : baseRows;
+    return rows.sort((a, b) => {
+      const ta = new Date(a._displayDate).getTime();
+      const tb = new Date(b._displayDate).getTime();
+      const delta = (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
+      return sort === "desc" ? delta : -delta;
+    });
+  }, [baseRows, sort, bucketKey, cfg.budgets]);
+
+  // Preview count for dialog
+  const previewCount = React.useMemo(() => {
+    if (!bucketPick) return baseRows.length;
+    const budget = (cfg.budgets || []).find((b) => b.key === bucketPick);
+    if (!budget) return baseRows.length;
+    const root = { op: budget.rulesOp || "OR", rules: budget.rules || [] };
+    return baseRows.filter((r) => matchesRules(r, root, root.op)).length;
+  }, [bucketPick, baseRows, cfg.budgets]);
 
   return (
     <div style={{ maxWidth: 1600, margin: "0 auto", padding: 20 }}>
@@ -434,6 +529,23 @@ export default function LineItems() {
           <MenuItem value="housing">Housing Card</MenuItem>
           <MenuItem value="youth">Youth Card</MenuItem>
         </TextField>
+
+        {/* Secret little button */}
+        <Tooltip title="Filter by Budget rules (experimental)">
+          <IconButton size="small" onClick={() => { setBucketPick(bucketKey || ""); setBucketOpen(true); }}>
+            <FilterAltIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+
+        {/* Active bucket chip */}
+        {!!bucketKey && (
+          <Chip
+            size="small"
+            variant="outlined"
+            label={`Bucket: ${(cfg.budgets || []).find(b => b.key === bucketKey)?.label || bucketKey}`}
+            onDelete={() => setBucketKey("")}
+          />
+        )}
       </div>
 
       {isLoading && <p>Loading…</p>}
@@ -464,7 +576,7 @@ export default function LineItems() {
                 <tr key={rowId}>
                   <Td title={displayDate(r)}>{r._displayDate}</Td>
                   <Td>
-                    <Chip size="small" variant="outlined" sx={{ ...typeStyle, borderWidth: 1 }} label={r._type.label} />
+                    <Chip size="small" variant="outlined" sx={{ ...typeChipStyles(r._type.key), borderWidth: 1 }} label={r._type.label} />
                   </Td>
                   <Td>{r.merchant || "—"}</Td>
                   <Td>{r.expenseType || "—"}</Td>
@@ -565,6 +677,42 @@ export default function LineItems() {
             </>
           )}
         </DialogContent>
+      </Dialog>
+
+      {/* Secret bucket filter dialog */}
+      <Dialog open={bucketOpen} onClose={() => setBucketOpen(false)} maxWidth="sm" fullWidth>
+        <DialogTitle>Filter by Budget Rules</DialogTitle>
+        <DialogContent dividers>
+          <FormControl fullWidth size="small" sx={{ mt: 1 }}>
+            <InputLabel id="bucket-select-label">Choose Budget</InputLabel>
+            <Select
+              labelId="bucket-select-label"
+              label="Choose Budget"
+              value={bucketPick}
+              onChange={(e) => setBucketPick(e.target.value)}
+            >
+              <MenuItem value=""><em>None</em></MenuItem>
+              {(cfg.budgets || []).map((b) => (
+                <MenuItem key={b.key} value={b.key}>{b.label || b.key}</MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+
+          <div style={{ fontSize: 12, marginTop: 10, opacity: 0.8 }}>
+            Matches in current view (after type/date/search): <b>{previewCount}</b>
+          </div>
+          <div style={{ fontSize: 12, marginTop: 6, opacity: 0.6 }}>
+            Uses the same nested rules (OR/AND, equals/icontains, boolean isFlex) as the Budgets page.
+          </div>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => { setBucketPick(""); setBucketKey(""); setBucketOpen(false); }}>
+            Clear
+          </Button>
+          <Button variant="contained" onClick={() => { setBucketKey(bucketPick || ""); setBucketOpen(false); }}>
+            Apply
+          </Button>
+        </DialogActions>
       </Dialog>
     </div>
   );
