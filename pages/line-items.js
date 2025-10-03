@@ -9,6 +9,7 @@ import {
   iterateCreditCardTxns,
   resolveInvoice,
 } from "../components/formSchemas";
+import AdvancedBudgetEditorModal from "../components/AdvancedBudgetEditorModal"; // ← ad-hoc filter UI
 
 import {
   Button,
@@ -22,9 +23,6 @@ import {
   Tab,
   Chip,
   Tooltip,
-  Select,
-  InputLabel,
-  FormControl,
   DialogActions,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
@@ -395,8 +393,7 @@ const matchesRules = (it, node, op = "OR") => {
 /* ---------------- Main page ---------------- */
 export default function LineItems() {
   const { data, error, isLoading, mutate } = useSWR("/api/purchases", fetcher, { refreshInterval: 300000 });
-  const { data: cfgRes } = useSWR("/api/budget-config", fetcher); // for secret bucket filter
-  const cfg = (cfgRes && cfgRes.config) ? cfgRes.config : { budgets: [] };
+  const items = data?.items || [];
 
   const [q, setQ] = React.useState("");
   const [from, setFrom] = React.useState("");
@@ -407,12 +404,28 @@ export default function LineItems() {
   const [modalRow, setModalRow] = React.useState(null);
   const [modalTab, setModalTab] = React.useState(0); // 0 structured, 1 raw item, 2 raw submission
 
-  // secret bucket filter UI state
-  const [bucketOpen, setBucketOpen] = React.useState(false);
-  const [bucketKey, setBucketKey] = React.useState("");         // applied
-  const [bucketPick, setBucketPick] = React.useState("");       // in dialog
+  // ---- Ad-hoc filter (front-end only) using AdvancedBudgetEditorModal ----
+  const [adhocOpen, setAdhocOpen] = React.useState(false);
+  const [adhoc, setAdhoc] = React.useState({
+    key: "adhoc",
+    label: "Custom",
+    budget: 0,
+    startSpent: 0,
+    from: "", to: "",
+    type: "standard",
+    rulesOp: "OR",
+    rules: [
+      { field: "program_raw", match: "", mode: "icontains" }
+    ],
+  });
+  const [adhocActive, setAdhocActive] = React.useState(false);
 
-  const items = data?.items || [];
+  // blur before opening to avoid aria-hidden warning (focused button becomes hidden by dialog)
+  const openAdhoc = (e) => {
+    try { e?.currentTarget?.blur?.(); } catch {}
+    // next tick → let focus leave the button before Dialog mounts
+    setTimeout(() => setAdhocOpen(true), 0);
+  };
 
   // Enrich rows so rule engine sees the same fields Budgets uses
   const enriched = React.useMemo(() => {
@@ -473,7 +486,7 @@ export default function LineItems() {
     return acc;
   }, [enriched]);
 
-  // First apply type/date/search; then optional bucket rules
+  // First apply type/date/search
   const baseRows = React.useMemo(() => {
     const txt = q.toLowerCase();
     return enriched
@@ -482,17 +495,9 @@ export default function LineItems() {
       .filter((r) => !txt || JSON.stringify(r).toLowerCase().includes(txt));
   }, [enriched, q, from, to, typeFilter]);
 
+  // Then optional ad-hoc rules
   const filtered = React.useMemo(() => {
-    if (!bucketKey) {
-      return baseRows.sort((a, b) => {
-        const ta = new Date(a._displayDate).getTime();
-        const tb = new Date(b._displayDate).getTime();
-        const delta = (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
-        return sort === "desc" ? delta : -delta;
-      });
-    }
-    const budget = (cfg.budgets || []).find((b) => b.key === bucketKey);
-    const root = budget ? { op: budget.rulesOp || "OR", rules: budget.rules || [] } : null;
+    const root = adhocActive ? { op: adhoc.rulesOp || "OR", rules: adhoc.rules || [] } : null;
     const rows = root ? baseRows.filter((r) => matchesRules(r, root, root.op)) : baseRows;
     return rows.sort((a, b) => {
       const ta = new Date(a._displayDate).getTime();
@@ -500,16 +505,7 @@ export default function LineItems() {
       const delta = (Number.isNaN(tb) ? 0 : tb) - (Number.isNaN(ta) ? 0 : ta);
       return sort === "desc" ? delta : -delta;
     });
-  }, [baseRows, sort, bucketKey, cfg.budgets]);
-
-  // Preview count for dialog
-  const previewCount = React.useMemo(() => {
-    if (!bucketPick) return baseRows.length;
-    const budget = (cfg.budgets || []).find((b) => b.key === bucketPick);
-    if (!budget) return baseRows.length;
-    const root = { op: budget.rulesOp || "OR", rules: budget.rules || [] };
-    return baseRows.filter((r) => matchesRules(r, root, root.op)).length;
-  }, [bucketPick, baseRows, cfg.budgets]);
+  }, [baseRows, sort, adhocActive, adhoc.rulesOp, adhoc.rules]);
 
   return (
     <div style={{ maxWidth: 1600, margin: "0 auto", padding: 20 }}>
@@ -530,20 +526,18 @@ export default function LineItems() {
           <MenuItem value="youth">Youth Card</MenuItem>
         </TextField>
 
-        {/* Secret little button */}
-        <Tooltip title="Filter by Budget rules (experimental)">
-          <IconButton size="small" onClick={() => { setBucketPick(bucketKey || ""); setBucketOpen(true); }}>
+        {/* Ad-hoc (front-end) filter using AdvancedBudgetEditorModal */}
+        <Tooltip title="Custom filter (nested rules)">
+          <IconButton size="small" onClick={openAdhoc}>
             <FilterAltIcon fontSize="small" />
           </IconButton>
         </Tooltip>
-
-        {/* Active bucket chip */}
-        {!!bucketKey && (
+        {adhocActive && (
           <Chip
             size="small"
             variant="outlined"
-            label={`Bucket: ${(cfg.budgets || []).find(b => b.key === bucketKey)?.label || bucketKey}`}
-            onDelete={() => setBucketKey("")}
+            label={`Filter: ${adhoc.label || "Custom"}`}
+            onDelete={() => setAdhocActive(false)}
           />
         )}
       </div>
@@ -576,7 +570,7 @@ export default function LineItems() {
                 <tr key={rowId}>
                   <Td title={displayDate(r)}>{r._displayDate}</Td>
                   <Td>
-                    <Chip size="small" variant="outlined" sx={{ ...typeChipStyles(r._type.key), borderWidth: 1 }} label={r._type.label} />
+                    <Chip size="small" variant="outlined" sx={{ ...typeStyle, borderWidth: 1 }} label={r._type.label} />
                   </Td>
                   <Td>{r.merchant || "—"}</Td>
                   <Td>{r.expenseType || "—"}</Td>
@@ -618,7 +612,7 @@ export default function LineItems() {
                 border: "1px solid #f5c2c7",
                 fontSize: 12
               }}>
-                YHDP Flex to date for client: ${spent.toFixed(2)} {spent>=400 ? "(review waiver)" : ""}
+                YHDP Flex to date for client: ${Number(spent).toFixed(2)} {spent>=400 ? "(review waiver)" : ""}
               </span>
             );
           })()}
@@ -679,41 +673,29 @@ export default function LineItems() {
         </DialogContent>
       </Dialog>
 
-      {/* Secret bucket filter dialog */}
-      <Dialog open={bucketOpen} onClose={() => setBucketOpen(false)} maxWidth="sm" fullWidth>
-        <DialogTitle>Filter by Budget Rules</DialogTitle>
-        <DialogContent dividers>
-          <FormControl fullWidth size="small" sx={{ mt: 1 }}>
-            <InputLabel id="bucket-select-label">Choose Budget</InputLabel>
-            <Select
-              labelId="bucket-select-label"
-              label="Choose Budget"
-              value={bucketPick}
-              onChange={(e) => setBucketPick(e.target.value)}
-            >
-              <MenuItem value=""><em>None</em></MenuItem>
-              {(cfg.budgets || []).map((b) => (
-                <MenuItem key={b.key} value={b.key}>{b.label || b.key}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
-
-          <div style={{ fontSize: 12, marginTop: 10, opacity: 0.8 }}>
-            Matches in current view (after type/date/search): <b>{previewCount}</b>
-          </div>
-          <div style={{ fontSize: 12, marginTop: 6, opacity: 0.6 }}>
-            Uses the same nested rules (OR/AND, equals/icontains, boolean isFlex) as the Budgets page.
-          </div>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => { setBucketPick(""); setBucketKey(""); setBucketOpen(false); }}>
-            Clear
-          </Button>
-          <Button variant="contained" onClick={() => { setBucketKey(bucketPick || ""); setBucketOpen(false); }}>
-            Apply
-          </Button>
+      {/* Ad-hoc filter editor (front-end only) */}
+      <AdvancedBudgetEditorModal
+        open={adhocOpen}
+        budget={adhoc}
+        onClose={() => setAdhocOpen(false)}
+        onSave={(updated) => {
+          // keep only rule bits; ignore budget numbers etc. for filtering
+          setAdhoc({
+            ...adhoc,
+            label: updated.label || "Custom",
+            rulesOp: updated.rulesOp || "OR",
+            rules: Array.isArray(updated.rules) ? updated.rules : [],
+          });
+          setAdhocActive(true);
+          setAdhocOpen(false);
+        }}
+      />
+      {/* quick actions for ad-hoc */}
+      {adhocOpen && (
+        <DialogActions sx={{ position: "fixed", bottom: 8, right: 24, pointerEvents: "none" }}>
+          {/* purely decorative/helper; AdvancedBudgetEditorModal already has its own actions */}
         </DialogActions>
-      </Dialog>
+      )}
     </div>
   );
 }
