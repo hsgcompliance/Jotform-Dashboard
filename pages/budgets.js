@@ -14,6 +14,7 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
+  Tooltip,
 } from "@mui/material";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
@@ -22,6 +23,10 @@ import SlicesModal from "../components/SlicesModal";
 import AdvancedBudgetEditorModal from "../components/AdvancedBudgetEditorModal";
 
 const fetcher = (u) => fetch(u).then((r) => r.json());
+
+/* ---------------- Tunables (display caps) ---------------- */
+const MAX_ROWS_PER_BUDGET = 15;       // default visible rows per budget table
+const MAX_DETAILS_PER_CLIENT = 15;    // default visible rows per client (YHDP FLEX)
 
 /* ---------------- Utilities ---------------- */
 const monthKey = (iso) => {
@@ -56,14 +61,10 @@ function decideTypeLabel(row) {
 /* ---------------- Rule engine ---------------- */
 /** Flexible value resolver: supports virtual fields + graceful fallbacks */
 const fieldResolvers = {
-  // canonical program text we match against
   program_raw: (it) =>
     it.program_raw || it.program || it.project || it.billedTo || it.billed_to_raw || "",
-  // “For a Customer / Program” raw-ish
   expense_type_raw: (it) => it.expense_type_raw || it.expenseType || "",
-  // normalized card bucket
   card_bucket: (it) => it.card_bucket || it.cardBucket || "",
-  // keep individual raw-ish fields available for rules
   billed_to_raw: (it) => it.billed_to_raw || it.billedTo || "",
   project_raw: (it) => it.project || it.project_raw || "",
   descriptor: (it) => it.descriptor || it.serviceType || "",
@@ -72,7 +73,6 @@ const fieldResolvers = {
   source: (it) => it.source || "",
   type: (it) => it.type || decideTypeLabel(it),
   card: (it) => it.card || "",
-  // VIRTUAL “bucket” text — scans across all relevant mapping fields
   bucket_text: (it) =>
     [
       it.program_raw,
@@ -92,7 +92,6 @@ const fieldResolvers = {
       .filter(Boolean)
       .join(" ")
       .toLowerCase(),
-  // boolean passthrough
   isFlex: (it) => (it.isFlex ? "true" : "false"),
 };
 
@@ -271,8 +270,9 @@ function useConfig() {
 }
 
 /* ---------------- Pretty table bits ---------------- */
-const Th = ({ children }) => (
+const Th = ({ children, title }) => (
   <th
+    title={title || ""}
     style={{
       textAlign: "left",
       padding: "8px 9px",
@@ -286,8 +286,9 @@ const Th = ({ children }) => (
   </th>
 );
 
-const Td = ({ children }) => (
+const Td = ({ children, title }) => (
   <td
+    title={title || ""}
     style={{
       padding: "7px 9px",
       borderBottom: "1px solid #f0f2f5",
@@ -336,7 +337,7 @@ function MonthlyTable({ title, data, limit, accent }) {
         ) : (
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 15 }}>
             <thead>
-              <tr style={{ background: "#f6f8fb" }}>
+              <tr>
                 <th style={thLarge}>Month</th>
                 <th style={thLarge}>Spent</th>
                 <th style={thLarge}>Remaining</th>
@@ -425,9 +426,6 @@ function exportRowsToCsv(filename, rows) {
 }
 
 /* ---------------- Flex Clients Modal (unchanged) ---------------- */
-// (kept identical to your version)
-// … (omitted for brevity; paste your existing FlexClientsModal here)
-
 function FlexClientsModal({ open, onClose, cfg, onSave }) {
   const normalizeKey = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
   const asNumber = (v, fallback = 0) => {
@@ -565,9 +563,25 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
 }
 
 /* ---------------- Budget section ---------------- */
-function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaultFlexCap }) {
+function BudgetSection({
+  b,
+  roll,
+  onEdit,
+  flexSpendByClient,
+  capByClient,
+  defaultFlexCap,
+}) {
   const [menuEl, setMenuEl] = React.useState(null);
   const [collapsed, setCollapsed] = React.useState(false);
+
+  // Per-table sort state
+  const [sortField, setSortField] = React.useState(b.type === "yhdp_flex" ? "total_desc" : "date_desc");
+  // Row cap toggles
+  const [showAll, setShowAll] = React.useState(false);
+
+  // For YHDP FLEX: open/close per-client and detail row caps per client
+  const [openClients, setOpenClients] = React.useState(() => new Set());
+  const [clientDetailCaps, setClientDetailCaps] = React.useState(() => new Map());
 
   const openMenu = (e) => setMenuEl(e.currentTarget);
   const closeMenu = () => setMenuEl(null);
@@ -575,6 +589,65 @@ function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaul
   const spent = roll.spent;
   const bal = Number(b.budget || 0) - spent;
   const pct = b.budget ? Math.round((spent / b.budget) * 100) : null;
+
+  const _clientKey =
+    typeof clientKey === "function"
+      ? clientKey
+      : (item) => String(item.customer || "").toLowerCase().trim();
+
+  // Base sort for raw rows (used by non-flex, and as source for grouping)
+  const sortedRows = React.useMemo(() => {
+    const list = [...(roll.rows || [])];
+    const sorter = (a, b) => {
+      switch (sortField) {
+        case "date_asc": return new Date(a.createdAt) - new Date(b.createdAt);
+        case "amount_desc": return Number(b.amount || 0) - Number(a.amount || 0);
+        case "amount_asc": return Number(a.amount || 0) - Number(b.amount || 0);
+        case "merchant_asc": return String(a.merchant || "").localeCompare(String(b.merchant || ""), undefined, { sensitivity: "base" });
+        case "merchant_desc": return String(b.merchant || "").localeCompare(String(a.merchant || ""), undefined, { sensitivity: "base" });
+        // default newest first
+        default:
+        case "date_desc": return new Date(b.createdAt) - new Date(a.createdAt);
+      }
+    };
+    return list.sort(sorter);
+  }, [roll.rows, sortField]);
+
+  // ---------- FLEX: grouped-by-client view ----------
+  const clientGroups = React.useMemo(() => {
+    if (b.type !== "yhdp_flex") return [];
+    const map = new Map();
+    for (const r of sortedRows) {
+      const k = _clientKey(r) || "(no client)";
+      if (!map.has(k)) map.set(k, []);
+      map.get(k).push(r);
+    }
+    let arr = Array.from(map.entries()).map(([key, rows]) => {
+      const total = rows.reduce((s, x) => s + Number(x.amount || 0), 0);
+      const name = rows[0]?.customer || "(no client)";
+      const cap = (capByClient.get(key) ?? defaultFlexCap) || null;
+      const toDate = flexSpendByClient.get(key) ?? total; // includes seed if configured
+      const over = cap != null && toDate >= cap;
+      return { key, name, total, cap, toDate, over, rows };
+    });
+
+    // Sort options for client groups
+    const cmpName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: "base" });
+    const cmpNum = (f, dir = "desc") => (a, b) => (dir === "desc" ? b[f] - a[f] : a[f] - b[f]);
+
+    switch (sortField) {
+      case "name_asc": arr.sort(cmpName); break;
+      case "name_desc": arr.sort((a, b) => cmpName(b, a)); break;
+      case "total_asc": arr.sort(cmpNum("total", "asc")); break;
+      case "total_desc": arr.sort(cmpNum("total", "desc")); break;
+      case "todate_asc": arr.sort(cmpNum("toDate", "asc")); break;
+      case "todate_desc": arr.sort(cmpNum("toDate", "desc")); break;
+      case "cap_asc": arr.sort((a, b) => (a.cap ?? Infinity) - (b.cap ?? Infinity)); break;
+      case "cap_desc": arr.sort((a, b) => (b.cap ?? -Infinity) - (a.cap ?? -Infinity)); break;
+      default: arr.sort(cmpNum("total", "desc"));
+    }
+    return arr;
+  }, [b.type, sortedRows, _clientKey, capByClient, defaultFlexCap, flexSpendByClient, sortField]);
 
   const cardShell = {
     border: "1px solid #e6e6e6",
@@ -584,10 +657,28 @@ function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaul
     overflow: "hidden",
   };
 
-  const _clientKey =
-    typeof clientKey === "function"
-      ? clientKey
-      : (item) => String(item.customer || "").toLowerCase().trim();
+  // Helpers for caps/toggles
+  const visibleRows = showAll ? sortedRows : sortedRows.slice(0, MAX_ROWS_PER_BUDGET);
+  const hasMoreRows = sortedRows.length > visibleRows.length;
+
+  const toggleClientOpen = (key) => {
+    setOpenClients((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+    // ensure a default cap exists when opening
+    setClientDetailCaps((prev) => {
+      if (prev.has(key)) return prev;
+      const next = new Map(prev);
+      next.set(key, MAX_DETAILS_PER_CLIENT);
+      return next;
+    });
+  };
+  const showAllForClient = (key) =>
+    setClientDetailCaps((prev) => new Map(prev).set(key, Infinity));
+  const collapseForClient = (key) =>
+    setClientDetailCaps((prev) => new Map(prev).set(key, MAX_DETAILS_PER_CLIENT));
 
   return (
     <section key={b.key} style={{ ...cardShell, marginBottom: 18 }}>
@@ -600,15 +691,63 @@ function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaul
           gap: 10,
         }}
       >
-        <Chip size="small" label={b.type === "yhdp_flex" ? "YHDP FLEX" : "Standard"} sx={{ bgcolor: b.type === "yhdp_flex" ? "#fff3e0" : "#eef5ff" }} />
+        <Chip
+          size="small"
+          label={b.type === "yhdp_flex" ? "YHDP FLEX" : "Standard"}
+          sx={{ bgcolor: b.type === "yhdp_flex" ? "#fff3e0" : "#eef5ff" }}
+        />
         <h3 style={{ margin: 0, fontSize: 18, flex: 1 }}>{b.label}</h3>
         <div style={{ fontSize: 12, opacity: 0.75, marginRight: 6 }}>
           {(b.from || "—")} → {(b.to || "—")}
         </div>
+
+        {/* Sorters (per table) */}
+        {b.type !== "yhdp_flex" ? (
+          <Tooltip title="Change row sort for this budget table">
+            <FormControl size="small" sx={{ minWidth: 180 }}>
+              <InputLabel id={`${b.key}-sort`}>Sort</InputLabel>
+              <Select
+                labelId={`${b.key}-sort`}
+                label="Sort"
+                value={sortField}
+                onChange={(e) => setSortField(e.target.value)}
+              >
+                <MenuItem value="date_desc">Newest first</MenuItem>
+                <MenuItem value="date_asc">Oldest first</MenuItem>
+                <MenuItem value="amount_desc">Amount ↓</MenuItem>
+                <MenuItem value="amount_asc">Amount ↑</MenuItem>
+                <MenuItem value="merchant_asc">Merchant A–Z</MenuItem>
+                <MenuItem value="merchant_desc">Merchant Z–A</MenuItem>
+              </Select>
+            </FormControl>
+          </Tooltip>
+        ) : (
+          <Tooltip title="Change sort for client totals">
+            <FormControl size="small" sx={{ minWidth: 220 }}>
+              <InputLabel id={`${b.key}-sort-flex`}>Sort clients</InputLabel>
+              <Select
+                labelId={`${b.key}-sort-flex`}
+                label="Sort clients"
+                value={sortField}
+                onChange={(e) => setSortField(e.target.value)}
+              >
+                <MenuItem value="total_desc">Total ↓ (default)</MenuItem>
+                <MenuItem value="total_asc">Total ↑</MenuItem>
+                <MenuItem value="name_asc">Name A–Z</MenuItem>
+                <MenuItem value="name_desc">Name Z–A</MenuItem>
+                <MenuItem value="todate_desc">To-date ↓</MenuItem>
+                <MenuItem value="todate_asc">To-date ↑</MenuItem>
+                <MenuItem value="cap_desc">Cap ↓</MenuItem>
+                <MenuItem value="cap_asc">Cap ↑</MenuItem>
+              </Select>
+            </FormControl>
+          </Tooltip>
+        )}
+
         <IconButton onClick={() => setCollapsed((v) => !v)} size="small" title={collapsed ? "Expand" : "Collapse"}>
           {collapsed ? <ExpandMoreIcon fontSize="small" /> : <ExpandLessIcon fontSize="small" />}
         </IconButton>
-        <IconButton onClick={openMenu} size="small">
+        <IconButton onClick={openMenu} size="small" title="More">
           <MoreVertIcon fontSize="small" />
         </IconButton>
         <Menu anchorEl={menuEl} open={!!menuEl} onClose={closeMenu}>
@@ -651,16 +790,18 @@ function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaul
 
       {!collapsed && (
         <>
-          <div style={{ display: "flex", gap: 12, margin: "8px 12px 12px", flexWrap: "wrap" }}>
-            <Stat label="Budget" value={`$${Number(b.budget || 0).toFixed(2)}`} />
-            <Stat label="Spent" value={`$${spent.toFixed(2)}`} />
-            <Stat label="Balance" value={`$${bal.toFixed(2)}`} danger={bal < 0} />
-            <Stat label="% Spent" value={b.budget ? `${pct}%` : "—"} />
-            {b.type === "yhdp_flex" && <div style={{ alignSelf: "center", fontSize: 12, opacity: 0.7 }}>Flex funds show extra columns</div>}
-          </div>
+          {/* Header stats */}
+          {b.type !== "yhdp_flex" ? (
+            <div style={{ display: "flex", gap: 12, margin: "8px 12px 12px", flexWrap: "wrap" }}>
+              <Stat label="Budget" value={`$${Number(b.budget || 0).toFixed(2)}`} />
+              <Stat label="Spent" value={`$${spent.toFixed(2)}`} />
+              <Stat label="Balance" value={`$${bal.toFixed(2)}`} danger={bal < 0} />
+              <Stat label="% Spent" value={b.budget ? `${pct}%` : "—"} />
+            </div>
+          ) : null}
 
           <div style={{ overflowX: "auto", padding: "0 10px 10px" }}>
-            {(roll.rows || []).length === 0 ? (
+            {(sortedRows || []).length === 0 ? (
               <div
                 style={{
                   fontSize: 13,
@@ -673,64 +814,173 @@ function BudgetSection({ b, roll, onEdit, flexSpendByClient, capByClient, defaul
               >
                 No rows in this window.
               </div>
+            ) : b.type !== "yhdp_flex" ? (
+              // ---------- Standard budget rows table ----------
+              <>
+                <table style={{ minWidth: 1000, borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr>
+                      <Th title="Submission/Invoice date (cards: createdAt)">Date</Th>
+                      <Th title="Grant or billed-to (invoices) or program fallback">Billed To</Th>
+                      <Th title="Vendor or merchant name">Merchant</Th>
+                      <Th title="Expense Type or Program (best-effort)">Expense / Program</Th>
+                      <Th title="Client name (if any)">Client</Th>
+                      <Th title="Dollar amount">Amount</Th>
+                      <Th title="Card vs Invoice vs Housing/Youth">Type</Th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleRows.map((r, i) => (
+                      <tr key={`${r.id}-${i}`}>
+                        <Td>{new Date(r.createdAt).toLocaleString()}</Td>
+                        <Td>{r.billedTo || r.billed_to_raw || r.program || "—"}</Td>
+                        <Td title={r.description || ""}>{r.merchant || "—"}</Td>
+                        <Td>{r.expenseType || r.expense_type_raw || r.program || "—"}</Td>
+                        <Td>{r.customer || "—"}</Td>
+                        <Td>${Number(r.amount || 0).toFixed(2)}</Td>
+                        <Td>{r.type || decideTypeLabel(r)}</Td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                {/* Show more / collapse */}
+                {hasMoreRows && (
+                  <div style={{ padding: "8px 10px" }}>
+                    <Button size="small" onClick={() => setShowAll(true)}>
+                      Show all {sortedRows.length} rows
+                    </Button>
+                  </div>
+                )}
+                {showAll && sortedRows.length > MAX_ROWS_PER_BUDGET && (
+                  <div style={{ padding: "8px 10px" }}>
+                    <Button size="small" onClick={() => setShowAll(false)}>
+                      Collapse to {MAX_ROWS_PER_BUDGET}
+                    </Button>
+                  </div>
+                )}
+              </>
             ) : (
-              <table style={{ minWidth: b.type === "yhdp_flex" ? 1250 : 1000, borderCollapse: "collapse" }}>
+              // ---------- YHDP FLEX: Stacked client table with collapsible line items ----------
+              <table style={{ minWidth: 1250, borderCollapse: "collapse" }}>
                 <thead>
                   <tr>
-                    <Th>Date</Th>
-                    {b.type === "yhdp_flex" && <Th>Billed To</Th>}
-                    <Th>Merchant</Th>
-                    <Th>Expense / Program</Th>
-                    {b.type === "yhdp_flex" && <Th>Client / Household</Th>}
-                    <Th>Amount</Th>
-                    {b.type === "yhdp_flex" && <Th>Client Flex to date</Th>}
-                    {b.type === "yhdp_flex" && <Th>Cap</Th>}
-                    <Th>Type</Th>
+                    <Th title="Expand to see this client’s detail rows" />
+                    <Th title="Client or household name">Client</Th>
+                    <Th title="Sum of this client’s rows within THIS budget window">Total (in budget)</Th>
+                    <Th title="Running total for this client across all data (includes starting spent)">To-date</Th>
+                    <Th title="Client-specific cap; uses default if not set">Cap</Th>
+                    <Th title="Over/under cap based on to-date">Status</Th>
                   </tr>
                 </thead>
                 <tbody>
-                  {roll.rows
-                    .sort((a, b2) => new Date(b2.createdAt) - new Date(a.createdAt))
-                    .map((r, i) => {
-                      const k = clientKey(r);
-                      const toDate = b.type === "yhdp_flex" && k ? (flexSpendByClient.get(k) || 0) : 0;
-                      const cap = (k && capByClient.get(k)) || defaultFlexCap;
-                      const over = b.type === "yhdp_flex" && cap != null && toDate >= cap;
+                  {clientGroups.map((g) => {
+                    const isOpen = openClients.has(g.key);
+                    const limit = clientDetailCaps.get(g.key) ?? MAX_DETAILS_PER_CLIENT;
+                    const detailRows = isOpen ? g.rows.slice(0, limit) : [];
+                    const hasMore = isOpen && g.rows.length > detailRows.length;
 
-                      return (
-                        <tr key={`${r.id}-${i}`}>
-                          <Td>{new Date(r.createdAt).toLocaleString()}</Td>
-                          {b.type === "yhdp_flex" && <Td>{r.billedTo || r.billed_to_raw || r.program || "—"}</Td>}
-                          <Td title={r.description || ""}>{r.merchant || "—"}</Td>
-                          <Td>{r.expenseType || r.expense_type_raw || r.program || "—"}</Td>
-                          {b.type === "yhdp_flex" && <Td>{r.customer || "—"}</Td>}
-                          <Td>${Number(r.amount || 0).toFixed(2)}</Td>
-                          {b.type === "yhdp_flex" && <Td>{k ? `$${toDate.toFixed(2)}` : "—"}</Td>}
-                          {b.type === "yhdp_flex" && (
-                            <Td>
-                              <span
-                                style={{
-                                  padding: "1px 8px",
-                                  borderRadius: 999,
-                                  border: "1px solid",
-                                  borderColor: over ? "#f5c2c7" : "#bcd0ff",
-                                  background: over ? "#fff5f5" : "#eef5ff",
-                                  fontSize: 12,
-                                }}
-                                title={over ? `≥ $${cap}; review waiver` : `Cap: $${cap}`}
-                              >
-                                {over ? "Over / review waiver" : `Cap $${cap}`}
-                              </span>
-                            </Td>
-                          )}
-                          <Td>{r.type || decideTypeLabel(r)}</Td>
+                    return (
+                      <React.Fragment key={g.key}>
+                        <tr>
+                          <Td>
+                            <IconButton
+                              size="small"
+                              onClick={() => toggleClientOpen(g.key)}
+                              title={isOpen ? "Collapse" : "Expand"}
+                            >
+                              {isOpen ? <ExpandLessIcon fontSize="small" /> : <ExpandMoreIcon fontSize="small" />}
+                            </IconButton>
+                          </Td>
+                          <Td>{g.name}</Td>
+                          <Td>${g.total.toFixed(2)}</Td>
+                          <Td title="Includes seeded starting spent if configured">${Number(g.toDate || 0).toFixed(2)}</Td>
+                          <Td>{g.cap != null ? `$${Number(g.cap).toFixed(2)}` : "—"}</Td>
+                          <Td title={g.over ? "Cap reached/exceeded" : "Under cap"}>
+                            <span
+                              style={{
+                                padding: "1px 8px",
+                                borderRadius: 999,
+                                border: "1px solid",
+                                borderColor: g.over ? "#f5c2c7" : "#bcd0ff",
+                                background: g.over ? "#fff5f5" : "#eef5ff",
+                                fontSize: 12,
+                              }}
+                            >
+                              {g.over ? "Over / review waiver" : "Under"}
+                            </span>
+                          </Td>
                         </tr>
-                      );
-                    })}
+
+                        {isOpen && (
+                          <tr>
+                            <td colSpan={6} style={{ padding: 0 }}>
+                              <div style={{ padding: "6px 8px 10px 34px" }}>
+                                <table style={{ minWidth: 1100, borderCollapse: "collapse" }}>
+                                  <thead>
+                                    <tr>
+                                      <Th title="Submission/Invoice date">Date</Th>
+                                      <Th title="Grant or billed-to (invoices) or program fallback">Billed To</Th>
+                                      <Th title="Vendor or merchant name">Merchant</Th>
+                                      <Th title="Expense Type or Program (best-effort)">Expense / Program</Th>
+                                      <Th title="Dollar amount">Amount</Th>
+                                      <Th title="Card vs Invoice vs Housing/Youth">Type</Th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {detailRows.map((r, i) => (
+                                      <tr key={`${r.id}-${i}`}>
+                                        <Td>{new Date(r.createdAt).toLocaleString()}</Td>
+                                        <Td>{r.billedTo || r.billed_to_raw || r.program || "—"}</Td>
+                                        <Td title={r.description || ""}>{r.merchant || "—"}</Td>
+                                        <Td>{r.expenseType || r.expense_type_raw || r.program || "—"}</Td>
+                                        <Td>${Number(r.amount || 0).toFixed(2)}</Td>
+                                        <Td>{r.type || decideTypeLabel(r)}</Td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+
+                                {hasMore && (
+                                  <div style={{ paddingTop: 6 }}>
+                                    <Button size="small" onClick={() => showAllForClient(g.key)}>
+                                      Show all {g.rows.length} items for {g.name}
+                                    </Button>
+                                  </div>
+                                )}
+                                {isOpen && g.rows.length > MAX_DETAILS_PER_CLIENT && limit === Infinity && (
+                                  <div style={{ paddingTop: 6 }}>
+                                    <Button size="small" onClick={() => collapseForClient(g.key)}>
+                                      Collapse to {MAX_DETAILS_PER_CLIENT}
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
           </div>
+
+          {/* Footer “show more/collapse” only for non-flex tables (flex handled per client) */}
+          {b.type !== "yhdp_flex" && sortedRows.length > MAX_ROWS_PER_BUDGET && (
+            <div style={{ padding: "6px 10px 12px" }}>
+              {showAll ? (
+                <Button size="small" onClick={() => setShowAll(false)}>
+                  Collapse to {MAX_ROWS_PER_BUDGET}
+                </Button>
+              ) : (
+                <Button size="small" onClick={() => setShowAll(true)}>
+                  Show all {sortedRows.length} rows
+                </Button>
+              )}
+            </div>
+          )}
         </>
       )}
     </section>
@@ -818,7 +1068,6 @@ export default function Budgets() {
 
       return {
         ...x,
-        // normalized/derived props for rules & tables
         type: decideTypeLabel(x),
         program_raw,
         billed_to_raw,
@@ -956,7 +1205,7 @@ export default function Budgets() {
           </FormControl>
 
           {/* kebab for slices config */}
-          <IconButton onClick={(e) => setCardMenu(e.currentTarget)} size="small">
+          <IconButton onClick={(e) => setCardMenu(e.currentTarget)} size="small" title="More">
             <MoreVertIcon fontSize="small" />
           </IconButton>
           <Menu anchorEl={cardMenu} open={!!cardMenu} onClose={() => setCardMenu(null)}>

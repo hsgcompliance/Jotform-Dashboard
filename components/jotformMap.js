@@ -11,9 +11,6 @@ import {
 } from "../components/formSchemas";
 
 // ─────────── tiny helpers ───────────
-const textify = (v) => (v == null ? "" : String(v).trim());
-
-// ─────────── bucket helper (cards) ───────────
 export function bucketCard(cardLabel = "") {
   const s = String(cardLabel).toLowerCase();
   if (s.includes("youth")) return "Youth";
@@ -28,6 +25,21 @@ export function monthKey(iso) {
   return `${y}-${m}`;
 }
 
+const textify = (v) => (v == null ? "" : String(v).trim());
+
+function toISO(s) {
+  if (!s) return "";
+  const str = String(s).trim();
+  if (/^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}/.test(str)) return str.replace(" ", "T");
+  const m = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})\s*(AM|PM))?$/i);
+  if (m) {
+    let [, mm, dd, yyyy, hh="00", mi="00", ap] = m; let H = +hh;
+    if (ap) { const u = ap.toUpperCase(); if (u==="PM"&&H<12) H+=12; if (u==="AM"&&H===12) H=0; }
+    return `${yyyy}-${String(+mm).padStart(2,"0")}-${String(+dd).padStart(2,"0")}T${String(H).padStart(2,"0")}:${String(+mi).padStart(2,"0")}:00`;
+  }
+  const d = new Date(str); return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0,19);
+}
+
 // ──────────────────────────────────────────────────────────────────────────────
 // CREDIT CARDS (form 251878265158166)
 // Uses CC_SCHEMA + iterateCreditCardTxns; “order” only for blocking.
@@ -37,7 +49,7 @@ export function monthKey(iso) {
 // ──────────────────────────────────────────────────────────────────────────────
 function normalizeCreditCard(sub) {
   const answers = sub?.answers || {};
-  const createdAt = sub?.created_at || new Date().toISOString();
+  const createdAt = toISO(sub?.created_at) || new Date().toISOString();
 
   const cardLabel = textify(getAns(answers, CC_SCHEMA.globals.cardChoice)) || "Card";
   const cardBucket = bucketCard(cardLabel);
@@ -114,15 +126,14 @@ function normalizeCreditCard(sub) {
 // Pairs splits by index; single path uses cost(17).
 // createdAt priority: invoice(31) → submission(4) → submission.created_at
 // ──────────────────────────────────────────────────────────────────────────────
+
+
 function normalizeInvoice(sub) {
   const answers = sub?.answers || {};
   const soln = resolveInvoice(answers);
-
-  const createdAt =
-    textify(getAns(answers, INVOICE_SCHEMA.globals.invoiceDate)) ||
-    textify(getAns(answers, INVOICE_SCHEMA.globals.submissionDate)) ||
-    sub?.created_at ||
-    new Date().toISOString();
+  const invRaw    = getAns(answers, INVOICE_SCHEMA.globals.invoiceDate);
+  const subDate   = getAns(answers, INVOICE_SCHEMA.globals.submissionDate);
+  const createdAt = toISO(invRaw) || toISO(subDate) || toISO(sub?.created_at) || new Date().toISOString();
 
   const vendor        = textify(getAns(answers, INVOICE_SCHEMA.globals.vendor));
   const expenseType   = textify(getAns(answers, INVOICE_SCHEMA.globals.expenseType));

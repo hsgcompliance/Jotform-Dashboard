@@ -6,21 +6,27 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 
-/** Fields you can target in rules (now with real “bucket” behavior) */
-const allowedFields = [
-  "bucket_text",      // NEW: scans across program/billedTo/project/descriptor/expense/card/customer/merchant
-  "program_raw",
-  "billed_to_raw",
-  "project_raw",
-  "descriptor",
-  "expense_type_raw",
-  "card_bucket",
-  "merchant",
-  "customer",
-  "card",
-  "source",
-  "type",
-  "isFlex",
+/** Ruleable fields (labels + hover descriptions) */
+const allowedFieldDefs = [
+  {
+    key: "bucket_text",
+    label: "Any grant field (wide)",
+    desc:
+      "Wide match across: Program, Billed To, Project, Descriptor/Service Type, Expense Type, Card, Merchant, Customer " +
+      "+ Purpose, Note, Other. Includes Invoice ‘Other’ and Credit Card ‘Notes’.",
+  },
+  { key: "program_raw",      label: "Program (resolved)",           desc: "Unified program: Project (Customer path) or Bill To (Program path)." },
+  { key: "billed_to_raw",    label: "Billed To (resolved)",         desc: "Resolved Bill To label when using Program path or splits." },
+  { key: "project_raw",      label: "Project (resolved)",           desc: "Resolved Project label when using Customer path." },
+  { key: "descriptor",       label: "Descriptor / Service Type",    desc: "Invoice service type or similar descriptor text." },
+  { key: "expense_type_raw", label: "Expense Type",                 desc: "Raw expense type value (e.g., For a Customer / For a Program)." },
+  { key: "card_bucket",      label: "Card Bucket",                  desc: "Youth or Housing bucket (derived from card label)." },
+  { key: "merchant",         label: "Merchant / Vendor",            desc: "Merchant for cards or Vendor for invoices." },
+  { key: "customer",         label: "Client / Customer",            desc: "Customer/client name if present." },
+  { key: "card",             label: "Card Label",                   desc: "Original card identity string (may be blank if bypassed)." },
+  { key: "source",           label: "Source (form)",                desc: "invoice or credit-card." },
+  { key: "type",             label: "Type Label",                   desc: "UI type label (Invoice / Housing Card / Youth Card)." },
+  { key: "isFlex",           label: "YHDP Flex (true/false)",       desc: "Boolean flag (schema flag or text heuristic)." },
 ];
 
 const emptyLeaf = () => ({ field: "bucket_text", match: "", mode: "icontains" });
@@ -72,8 +78,10 @@ function RuleRow({ value, onChange, onRemove }) {
         onChange={(e) => handleField(e.target.value)}
         sx={{ minWidth: 180 }}
       >
-        {allowedFields.map((f) => (
-          <MenuItem key={f} value={f}>{f}</MenuItem>
+        {allowedFieldDefs.map(({ key, label, desc }) => (
+          <MenuItem key={key} value={key} title={desc}>
+            {label}
+          </MenuItem>
         ))}
       </TextField>
 
