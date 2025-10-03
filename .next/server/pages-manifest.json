@@ -1,9 +1,0 @@
-{
-  "/_app": "pages/_app.js",
-  "/_error": "pages/_error.js",
-  "/_document": "pages/_document.js",
-  "/api/purchases": "pages/api/purchases.js",
-  "/line-items": "pages/line-items.js",
-  "/budgets": "pages/budgets.js",
-  "/api/budget-config": "pages/api/budget-config.js"
-}
