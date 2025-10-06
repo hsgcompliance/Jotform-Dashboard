@@ -1,6 +1,6 @@
 // pages/index.js
 import { useSession, signIn } from 'next-auth/react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import axios from 'axios';
 
 import useAllForms   from '../components/useAllForms';
@@ -11,10 +11,21 @@ import AnswerTable   from '../components/AnswerTable';
 import ManualRefresh from '../components/ManualRefresh';
 import TagFilterBar  from '../components/TagFilterBar';
 import FormTagPicker from '../components/FormTagPicker';
+import DownloadBar   from '../components/DownloadBar';
 
 /* ─────── localStorage helpers for subs ─────── */
 const rLS = k => (typeof window !== 'undefined' ? localStorage.getItem(k) : null);
 const wLS = (k, v) => { if (typeof window !== 'undefined') localStorage.setItem(k, v); };
+
+/* Optional per-form PDF doc mapping (labels → documentId) via NEXT_PUBLIC env */
+const DOC_MAP = (() => {
+  try {
+    const raw = process.env.NEXT_PUBLIC_JOTFORM_PDF_DOC_MAP || '{}';
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+})();
 
 export default function Dashboard() {
   /* ─── Google auth gate ─── */
@@ -32,17 +43,17 @@ export default function Dashboard() {
   /* ─── Tag state ─── */
   const [rawTagMap, setRawTagMap] = useFormTags(); // user-defined tags
   // Build a “computed” tagMap that ensures Sign forms always include “JOTSIGN”
-  const tagMap = {};
-  allForms.forEach(f => {
-    const userTags = rawTagMap[f.id] || [];
-    const signTag = f.isSign ? ['JOTSIGN'] : [];
-    tagMap[f.id] = Array.from(
-      new Set([ ...userTags.map(t => t.toUpperCase()), ...signTag ])
-    );
-  });
+  const tagMap = useMemo(() => {
+    const m = {};
+    allForms.forEach(f => {
+      const userTags = rawTagMap[f.id] || [];
+      const signTag = f.isSign ? ['JOTSIGN'] : [];
+      m[f.id] = Array.from(new Set([ ...userTags.map(t => t.toUpperCase()), ...signTag ]));
+    });
+    return m;
+  }, [allForms, rawTagMap]);
   const [tagDialog, setTagDialog] = useState(null);  // form object being edited
   const [activeTags, setActiveTags] = useState([]);  // [ 'TAG1', 'TAG2' ]
-
   const onEditTags = form => setTagDialog(form);
 
   /* ─── Local state ─── */
@@ -52,10 +63,10 @@ export default function Dashboard() {
   const [selSub,       setSelSub]       = useState(null);
   const [searchForms,  setSearchForms]  = useState('');
   const [searchSubs,   setSearchSubs]   = useState('');
-  const [loadingSubs, setLoadingSubs] = useState(false);
+  const [loadingSubs,  setLoadingSubs]  = useState(false);
 
   /* ─── Get regular submissions (with caching) ─── */
-  const loadSubs = formId => {
+  const loadSubs = useCallback((formId) => {
     setLoadingSubs(true);
 
     if (subsCache[formId]) {
@@ -80,62 +91,50 @@ export default function Dashboard() {
         wLS(`subs_${formId}`, JSON.stringify(list));
       })
       .catch(console.error)
-      .finally(() => {
-        setLoadingSubs(false);
-    });
-};
+      .finally(() => setLoadingSubs(false));
+  }, [subsCache]);
 
-  
-  const reloadSubs = formId => {
-    // clear in‑memory cache
+  const reloadSubs = useCallback((formId) => {
     setSubsCache(prev => ({ ...prev, [formId]: undefined }));
-    // clear localStorage cache
-    if (typeof window !== 'undefined') {
-      localStorage.removeItem(`subs_${formId}`);
-    }
-    // re‑load from the API
+    if (typeof window !== 'undefined') localStorage.removeItem(`subs_${formId}`);
     loadSubs(formId);
-  };
+  }, [loadSubs]);
 
-  /* ─── Get Sign submissions (signed documents) ─── */
-  const loadSignDocs = async formId => {
+  /* ─── Get Sign submissions (signed documents) — OK if this fails ─── */
+  const loadSignDocs = useCallback(async (formId) => {
+    setLoadingSubs(true);
     setSubs([]); // clear out any old entries
     try {
       const { data } = await axios.get(`/api/signDocs?formId=${formId}`);
-      // data is array of { id, created_at, download_url, signers: [...] }
-      const mapped = data.map(doc => ({
+      // data expected: array of { id, created_at, download_url, signers: [...] }
+      const mapped = (data || []).map(doc => ({
         id: doc.id,
         isSign: true,
         created_at: doc.signers?.[0]?.signed_at || doc.created_at,
         answers: {
-          signer: {
-            text: 'Signer',
-            answer: doc.signers?.[0]?.name || 'Unknown'
-          },
-          pdf: {
-            text: 'Signed PDF',
-            answer: doc.download_url
-          }
+          signer: { text: 'Signer',      answer: doc.signers?.[0]?.name || 'Unknown' },
+          pdf:    { text: 'Signed PDF',  answer: doc.download_url }
         }
       }));
       setSubs(mapped);
     } catch (err) {
-      console.error('Error loading Sign docs:', err);
-      setSubs([]);
+      console.error('Error loading Sign docs:', err?.response?.data || err?.message || err);
+      setSubs([]); // graceful empty
+    } finally {
+      setLoadingSubs(false);
     }
-  };
+  }, []);
 
   /* ─── Load subs on form change ─── */
   useEffect(() => {
     if (!selectedForm) return;
-
     setSelSub(null);
     if (selectedForm.isSign) {
       loadSignDocs(selectedForm.id);
     } else {
       loadSubs(selectedForm.id);
     }
-  }, [selectedForm]);
+  }, [selectedForm, loadSubs, loadSignDocs]);
 
   /* ─── Filtering helpers ─── */
   const matchesTitle = f => f.title.toLowerCase().includes(searchForms.toLowerCase());
@@ -209,26 +208,25 @@ export default function Dashboard() {
                     rel="noreferrer"
                   >Open ↗</a>
                 </div>
-                
+
                 <div style={{
                   display: 'flex',
                   alignItems: 'center',
                   gap: 8,
                   margin: '12px 0'
                 }}>
-
-                <input
-                  style={{
-                    flex: 1,
-                    padding:4,
-                    border:'1px solid #ccc',
-                    borderRadius:4
-                  }}
-                  placeholder="Search submissions…"
-                  value={searchSubs}
-                  onChange={e => setSearchSubs(e.target.value)}
-                />
-                <ManualRefresh
+                  <input
+                    style={{
+                      flex: 1,
+                      padding:4,
+                      border:'1px solid #ccc',
+                      borderRadius:4
+                    }}
+                    placeholder="Search submissions…"
+                    value={searchSubs}
+                    onChange={e => setSearchSubs(e.target.value)}
+                  />
+                  <ManualRefresh
                     onClick={() => reloadSubs(selectedForm.id)}
                     loading={loadingSubs}
                     title="Reload submissions"
@@ -248,10 +246,19 @@ export default function Dashboard() {
 
           {/* submission detail */}
           <div style={{ flex:1, padding:16, overflowY:'auto' }}>
-            {selSub
-              ? <AnswerTable answers={selSub.answers} subId={selSub.id} />
-              : <p>{selectedForm ? 'Select a submission.' : '—'}</p>
-            }
+            {selSub ? (
+              <>
+                <DownloadBar
+                  formId={selectedForm?.id}
+                  sub={selSub}
+                  /* Optional extra doc buttons per form (if provided) */
+                  extraDocs={DOC_MAP[selectedForm?.id] || {}}
+                />
+                <AnswerTable answers={selSub.answers} subId={selSub.id} />
+              </>
+            ) : (
+              <p>{selectedForm ? 'Select a submission.' : '—'}</p>
+            )}
           </div>
         </div>
 

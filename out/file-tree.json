@@ -1,13 +1,8 @@
 {
-  "name": "next-dashboard-starter",
+  "name": "Jotform-Dashboard",
   "path": ".",
   "type": "dir",
   "children": [
-    {
-      "name": ".env.local",
-      "path": ".env.local",
-      "type": "file"
-    },
     {
       "name": ".gitignore",
       "path": ".gitignore",
@@ -19,80 +14,110 @@
       "type": "dir",
       "children": [
         {
+          "name": "AdvancedBudgetEditorModal.js",
+          "path": "components/AdvancedBudgetEditorModal.js",
+          "type": "file"
+        },
+        {
           "name": "AnswerTable.js",
-          "path": "components\\AnswerTable.js",
+          "path": "components/AnswerTable.js",
+          "type": "file"
+        },
+        {
+          "name": "BudgetConfigModal.js",
+          "path": "components/BudgetConfigModal.js",
+          "type": "file"
+        },
+        {
+          "name": "CardLimitForm.js",
+          "path": "components/CardLimitForm.js",
           "type": "file"
         },
         {
           "name": "ErrorBoundary.js",
-          "path": "components\\ErrorBoundary.js",
+          "path": "components/ErrorBoundary.js",
           "type": "file"
         },
         {
           "name": "FormPicker.js",
-          "path": "components\\FormPicker.js",
+          "path": "components/FormPicker.js",
           "type": "file"
         },
         {
           "name": "FormSidebar.js",
-          "path": "components\\FormSidebar.js",
+          "path": "components/FormSidebar.js",
           "type": "file"
         },
         {
           "name": "FormTagPicker.js",
-          "path": "components\\FormTagPicker.js",
+          "path": "components/FormTagPicker.js",
           "type": "file"
         },
         {
           "name": "Gate.js",
-          "path": "components\\Gate.js",
+          "path": "components/Gate.js",
           "type": "file"
         },
         {
           "name": "ManualRefresh.js",
-          "path": "components\\ManualRefresh.js",
+          "path": "components/ManualRefresh.js",
           "type": "file"
         },
         {
           "name": "Nav.js",
-          "path": "components\\Nav.js",
+          "path": "components/Nav.js",
           "type": "file"
         },
         {
           "name": "PDFButton.js",
-          "path": "components\\PDFButton.js",
+          "path": "components/PDFButton.js",
+          "type": "file"
+        },
+        {
+          "name": "SlicesModal.js",
+          "path": "components/SlicesModal.js",
           "type": "file"
         },
         {
           "name": "SubList.js",
-          "path": "components\\SubList.js",
+          "path": "components/SubList.js",
           "type": "file"
         },
         {
           "name": "TagFilterBar.js",
-          "path": "components\\TagFilterBar.js",
+          "path": "components/TagFilterBar.js",
+          "type": "file"
+        },
+        {
+          "name": "formSchemas.js",
+          "path": "components/formSchemas.js",
+          "type": "file"
+        },
+        {
+          "name": "jotformMap.js",
+          "path": "components/jotformMap.js",
           "type": "file"
         },
         {
           "name": "useAllForms.js",
-          "path": "components\\useAllForms.js",
+          "path": "components/useAllForms.js",
           "type": "file"
         },
         {
           "name": "useCachedForms.js",
-          "path": "components\\useCachedForms.js",
+          "path": "components/useCachedForms.js",
           "type": "file"
         },
         {
           "name": "useFormTags.js",
-          "path": "components\\useFormTags.js",
+          "path": "components/useFormTags.js",
           "type": "file"
         }
       ]
     },
     {
-      "name": "fileTree.mjs",
-      "path": "fileTree.mjs",
+      "name": "next.config.js",
+      "path": "next.config.js",
       "type": "file"
     },
     {
@@ -106,88 +131,129 @@
       "type": "dir",
       "children": [
         {
+          "name": "_app.js",
+          "path": "pages/_app.js",
+          "type": "file"
+        },
+        {
           "name": "api",
-          "path": "pages\\api",
+          "path": "pages/api",
           "type": "dir",
           "children": [
             {
               "name": "auth",
-              "path": "pages\\api\\auth",
+              "path": "pages/api/auth",
               "type": "dir",
               "children": [
                 {
                   "name": "[...nextauth].js",
-                  "path": "pages\\api\\auth\\[...nextauth].js",
+                  "path": "pages/api/auth/[...nextauth].js",
                   "type": "file"
                 }
               ]
             },
             {
+              "name": "budget-config.js",
+              "path": "pages/api/budget-config.js",
+              "type": "file"
+            },
+            {
+              "name": "card-tracker.js",
+              "path": "pages/api/card-tracker.js",
+              "type": "file"
+            },
+            {
               "name": "clone.js",
-              "path": "pages\\api\\clone.js",
+              "path": "pages/api/clone.js",
               "type": "file"
             },
             {
               "name": "forms.js",
-              "path": "pages\\api\\forms.js",
+              "path": "pages/api/forms.js",
               "type": "file"
             },
             {
               "name": "latest.js",
-              "path": "pages\\api\\latest.js",
+              "path": "pages/api/latest.js",
+              "type": "file"
+            },
+            {
+              "name": "purchases.js",
+              "path": "pages/api/purchases.js",
               "type": "file"
             },
             {
               "name": "signDocs.js",
-              "path": "pages\\api\\signDocs.js",
+              "path": "pages/api/signDocs.js",
               "type": "file"
             },
             {
               "name": "signForms.js",
-              "path": "pages\\api\\signForms.js",
+              "path": "pages/api/signForms.js",
               "type": "file"
             },
             {
               "name": "submissions.js",
-              "path": "pages\\api\\submissions.js",
+              "path": "pages/api/submissions.js",
               "type": "file"
             },
             {
               "name": "webhooks.js",
-              "path": "pages\\api\\webhooks.js",
+              "path": "pages/api/webhooks.js",
               "type": "file"
             }
           ]
         },
         {
-          "name": "builder.js",
-          "path": "pages\\builder.js",
+          "name": "budgets.js",
+          "path": "pages/budgets.js",
           "type": "file"
         },
         {
-          "name": "form",
-          "path": "pages\\form",
-          "type": "dir",
-          "children": []
+          "name": "builder.js",
+          "path": "pages/builder.js",
+          "type": "file"
+        },
+        {
+          "name": "credit-cards.js",
+          "path": "pages/credit-cards.js",
+          "type": "file"
         },
         {
           "name": "index.js",
-          "path": "pages\\index.js",
+          "path": "pages/index.js",
+          "type": "file"
+        },
+        {
+          "name": "line-items.js",
+          "path": "pages/line-items.js",
           "type": "file"
         },
         {
           "name": "live.js",
-          "path": "pages\\live.js",
+          "path": "pages/live.js",
           "type": "file"
         },
         {
           "name": "webhooks.js",
-          "path": "pages\\webhooks.js",
+          "path": "pages/webhooks.js",
+          "type": "file"
+        }
+      ]
+    },
+    {
+      "name": "scripts",
+      "path": "scripts",
+      "type": "dir",
+      "children": [
+        {
+          "name": "fileTree.mjs",
+          "path": "scripts/fileTree.mjs",
           "type": "file"
         },
         {
-          "name": "_app.js",
-          "path": "pages\\_app.js",
+          "name": "samplePayLoads.mjs",
+          "path": "scripts/samplePayLoads.mjs",
           "type": "file"
         }
       ]
