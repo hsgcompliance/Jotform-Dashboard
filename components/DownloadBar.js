@@ -1,3 +1,4 @@
+// components/DownloadBar.js
 export default function DownloadBar({ formId, sub, extraDocs = {} }) {
   if (!formId || !sub) return null;
   const sid = sub.id;
@@ -5,14 +6,25 @@ export default function DownloadBar({ formId, sub, extraDocs = {} }) {
   const open = href => window.open(href, '_blank', 'noopener,noreferrer');
 
   const buttons = [
+    // Jotform-generated PDF (via your API proxy)
     { label: 'Download PDF', href: `/api/pdf?formId=${formId}&submissionId=${sid}` },
-    { label: 'Open Submission', href: `https://www.jotform.com/submission/${sid}` },
-    { label: 'Edit Submission', href: `https://www.jotform.com/edit/${sid}` },
-    { label: 'Open Inbox/Tables', href: `https://www.jotform.com/submissions/${formId}` },
+
+    // Inbox (single submission view)
+    { label: 'Open in Inbox', href: `https://www.jotform.com/inbox/${formId}/${sid}` },
+
+    // Inbox (all submissions for this form)
+    { label: 'Open Inbox (All)', href: `https://www.jotform.com/inbox/${formId}` },
+
+    // Tables (all submissions)
+    { label: 'Open Tables', href: `https://www.jotform.com/tables/${formId}` },
+
+    // Form (public form URL — not submission edit)
+    { label: 'Open Form', href: `https://www.jotform.com/form/${formId}` },
   ];
 
   const extra = Object.entries(extraDocs).map(([label, docId]) => ({
-    label: `PDF: ${label}`, href: `/api/pdf?formId=${formId}&submissionId=${sid}&docId=${docId}`
+    label: `PDF: ${label}`,
+    href: `/api/pdf?formId=${formId}&submissionId=${sid}&docId=${docId}`,
   }));
 
   return (
