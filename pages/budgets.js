@@ -51,6 +51,14 @@ const within = (iso, from, to) => {
 
 const norm = (s) => String(s || "").toLowerCase().trim();
 
+const normalizeClientKey = (s) =>
+  String(s || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^\p{Letter}\p{Number}\s]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
 function decideTypeLabel(row) {
   if ((row.source || "").toLowerCase() === "invoice") return "Invoice";
   if (row.card_bucket === "Youth") return "Youth Card";
@@ -247,7 +255,15 @@ function useConfig() {
       try {
         const r = await fetch("/api/budget-config");
         const j = await r.json();
-        if (mounted && j?.ok && j?.config) setCfg({ ...defaultCfg, ...j.config });
+        if (mounted && j?.ok && j?.config) {
+          const cfgIn = { ...defaultCfg, ...j.config };
+          cfgIn.flexClients = (cfgIn.flexClients || []).map(c => ({
+            ...c,
+            show: c.show !== false,
+            key: normalizeClientKey(c.key || c.name),
+          }));
+          setCfg(cfgIn);
+        }
       } catch (e) {
         console.warn("budget-config GET failed, using defaults", e);
       } finally {
@@ -390,7 +406,7 @@ function Stat({ label, value, danger }) {
 
 /* ---------- Flex helper ---------- */
 function clientKey(item) {
-  return norm(item.customer || "");
+  return normalizeClientKey(item.customer || "");
 }
 function isYHDPFlex(item) {
   return !!item?.isFlex;
@@ -427,7 +443,6 @@ function exportRowsToCsv(filename, rows) {
 
 /* ---------------- Flex Clients Modal (unchanged) ---------------- */
 function FlexClientsModal({ open, onClose, cfg, onSave }) {
-  const normalizeKey = (s) => String(s || "").trim().toLowerCase().replace(/\s+/g, " ");
   const asNumber = (v, fallback = 0) => {
     const n = Number(v);
     return Number.isFinite(n) ? n : fallback;
@@ -435,13 +450,15 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
 
   const [local, setLocal] = React.useState({
     flexCap: cfg.flexCap || 500,
-    flexClients: cfg.flexClients || [],
+    flexClients: (cfg.flexClients || []).map(c => ({ show:true, ...c })),
   });
 
   React.useEffect(() => {
     setLocal({
       flexCap: cfg.flexCap || 500,
-      flexClients: Array.isArray(cfg.flexClients) ? cfg.flexClients : [],
+      flexClients: Array.isArray(cfg.flexClients)
+        ? cfg.flexClients.map(c => ({ show:true, ...c }))
+        : [],
     });
   }, [cfg]);
 
@@ -456,7 +473,7 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
   const addClient = () => {
     setLocal((prev) => ({
       ...prev,
-      flexClients: [...(prev.flexClients || []), { key: "", name: "", start: 0, cap: "" }],
+      flexClients: [...(prev.flexClients || []), { key: "", name: "", start: 0, cap: "", show: true }],
     }));
   };
 
@@ -472,9 +489,11 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
       .filter((c) => String(c.name || c.key).trim() !== "")
       .map((c) => {
         const name = String(c.name || "").trim();
-        const key = c.key && String(c.key).trim() ? normalizeKey(c.key) : normalizeKey(name);
+        const key = c.key && String(c.key).trim()
+          ? normalizeClientKey(c.key)
+          : normalizeClientKey(name);
         const cap = c.cap === "" || c.cap == null ? "" : asNumber(c.cap, "");
-        return { key, name, start: asNumber(c.start, 0), cap };
+        return { key, name, start: asNumber(c.start, 0), cap, show: c.show !== false };
       });
 
     const byKey = new Map();
@@ -504,7 +523,7 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
 
         {(local.flexClients || []).map((c, i) => (
           <div key={i} style={{ border: "1px solid #eee", borderRadius: 8, padding: 10, marginBottom: 10 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr auto", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "2fr 2fr 1fr 1fr 1fr auto", gap: 10 }}>
               <TextField
                 label="Name"
                 size="small"
@@ -512,7 +531,7 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
                 onChange={(e) => {
                   const name = e.target.value;
                   const patch = { name };
-                  if (!String(c.key || "").trim()) patch.key = normalizeKey(name);
+                  if (!String(c.key || "").trim()) patch.key = normalizeClientKey(name);
                   updateClient(i, patch);
                 }}
               />
@@ -520,7 +539,7 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
                 label="Key (unique, lowercased)"
                 size="small"
                 value={c.key}
-                onChange={(e) => updateClient(i, { key: normalizeKey(e.target.value) })}
+                onChange={(e) => updateClient(i, { key: normalizeClientKey(e.target.value) })}
                 helperText="Auto-filled from name if empty"
               />
               <TextField
@@ -540,6 +559,14 @@ function FlexClientsModal({ open, onClose, cfg, onSave }) {
                   updateClient(i, { cap: raw === "" ? "" : Number(raw || 0) });
                 }}
               />
+              <div style={{ display:"flex", alignItems:"center", gap:8 }}>
+                <input
+                  type="checkbox"
+                  checked={c.show !== false}
+                  onChange={(e) => updateClient(i, { show: e.target.checked })}
+                />
+                <span style={{ fontSize:12 }}>Show in table</span>
+              </div>
               <div>
                 <Button color="error" onClick={() => removeClient(i)}>
                   Remove
@@ -570,6 +597,7 @@ function BudgetSection({
   flexSpendByClient,
   capByClient,
   defaultFlexCap,
+  flexClients,
 }) {
   const [menuEl, setMenuEl] = React.useState(null);
   const [collapsed, setCollapsed] = React.useState(false);
@@ -631,6 +659,18 @@ function BudgetSection({
       return { key, name, total, cap, toDate, over, rows };
     });
 
+    // Inject clients marked "show" even with no rows in this window
+    const showList = (flexClients || []).filter(c => c.show !== false);
+    const present = new Set(arr.map(g => g.key));
+    for (const c of showList) {
+      const key = normalizeClientKey(c.key || c.name);
+      if (!key || present.has(key)) continue;
+      const cap = (capByClient.get(key) ?? defaultFlexCap) || null;
+      const toDate = flexSpendByClient.get(key) ?? Number(c.start || 0);
+      const over = cap != null && toDate >= cap;
+      arr.push({ key, name: c.name || key, total: 0, cap, toDate, over, rows: [] });
+    }
+
     // Sort options for client groups
     const cmpName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { sensitivity: "base" });
     const cmpNum = (f, dir = "desc") => (a, b) => (dir === "desc" ? b[f] - a[f] : a[f] - b[f]);
@@ -647,7 +687,7 @@ function BudgetSection({
       default: arr.sort(cmpNum("total", "desc"));
     }
     return arr;
-  }, [b.type, sortedRows, _clientKey, capByClient, defaultFlexCap, flexSpendByClient, sortField]);
+  }, [b.type, sortedRows, _clientKey, capByClient, defaultFlexCap, flexSpendByClient, sortField, flexClients]);
 
   const cardShell = {
     border: "1px solid #e6e6e6",
@@ -1089,7 +1129,7 @@ export default function Budgets() {
   const flexSeedByClient = React.useMemo(() => {
     const m = new Map();
     for (const c of cfg.flexClients || []) {
-      const k = String(c.key || "").trim().toLowerCase();
+      const k = normalizeClientKey(c.key || c.name);
       if (!k) continue;
       m.set(k, Number(c.start || 0));
     }
@@ -1099,7 +1139,7 @@ export default function Budgets() {
   const capByClient = React.useMemo(() => {
     const m = new Map();
     for (const c of cfg.flexClients || []) {
-      const k = String(c.key || "").trim().toLowerCase();
+      const k = normalizeClientKey(c.key || c.name);
       if (!k) continue;
       if (c.cap !== "" && c.cap != null) m.set(k, Number(c.cap));
     }
@@ -1151,6 +1191,31 @@ export default function Budgets() {
     }
     return out;
   }, [enriched, cfg.budgets]);
+
+ // Auto-add Flex clients discovered in data
+ React.useEffect(() => {
+   if (!enriched.length) return;
+   const discovered = new Map();
+   for (const r of enriched) {
+     if (!isYHDPFlex(r)) continue;
+     const key = clientKey(r);
+     const name = r.customer || "";
+     if (!key) continue;
+     if (!discovered.has(key)) discovered.set(key, name);
+   }
+   if (discovered.size === 0) return;
+   const existing = new Map((cfg.flexClients || []).map(c => [normalizeClientKey(c.key || c.name), c]));
+   let changed = false;
+   const next = [...(cfg.flexClients || [])];
+   for (const [k, name] of discovered.entries()) {
+     if (!existing.has(k)) {
+       next.push({ key: k, name, start: 0, cap: "", show: true });
+       changed = true;
+     }
+   }
+   if (changed) saveCfg({ ...cfg, flexClients: next });
+ // eslint-disable-next-line react-hooks/exhaustive-deps
+ }, [enriched]); // persist when new flex clients appear
 
   // style helper
   const cardShell = {
@@ -1291,6 +1356,7 @@ export default function Budgets() {
             flexSpendByClient={flexSpendByClient}
             capByClient={capByClient}
             defaultFlexCap={cfg.flexCap || 500}
+            flexClients={cfg.flexClients || []}
           />
         );
       })}
