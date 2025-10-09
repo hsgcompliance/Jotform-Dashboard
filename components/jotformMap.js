@@ -44,8 +44,12 @@ function toISO(s) {
 function computeFlex(answers, extras = {}) {
   const hay = JSON.stringify(answers || {}).toLowerCase();
   const reasons = [];
-  // Any “flex” mention (covers “yhdp flex”, “flex funds”, etc.)
-  if (/\byhdp\b.*\bflex\b/.test(hay) || /\bflex\s*fund/.test(hay) || /\bflex\b/.test(hay)) {
+
+  // Must have flex mention AND meet program/billedTo/expense context
+  const hasFlexWord = /\bflex\b/.test(hay);
+  const hasCustomer = /\bcustomer\b/.test(hay);
+  const hasYhdpOrBp = /\byhdp\b/.test(hay) || /\bblueprint\b/.test(hay);
+  if (hasFlexWord && hasCustomer && hasYhdpOrBp) {
     reasons.push("text:flex");
   }
   // Card per-txn toggles can pass through via extras
@@ -156,11 +160,12 @@ function normalizeCreditCard(sub) {
   // Add submission-level flex awareness to each row (without losing txn flag)
   return items.map((r) => {
     const subFlex = computeFlex(answers, { anyFlexTxn: anyFlex });
+    const expenseOK = (r.expenseType || "").toLowerCase().includes("customer");
+    const progOK = /(yhdp|blueprint)/i.test(`${r.program||""} ${r.billedTo||""}`);
     return {
       ...r,
       submissionIsFlex: anyFlex,
-      // unify: true if row OR submission flex detector says so
-      isFlex: r.isFlex || subFlex.isFlex,
+      isFlex: flexOK && expenseOK && progOK,
       flexReasons: Array.from(new Set([...(r.flexReasons || []), ...(subFlex.reasons || [])])),
     };
   });
@@ -194,6 +199,9 @@ function normalizeInvoice(sub) {
   // Stronger flex: schema-derived OR any “flex funds” text anywhere
   // Unified flex detector
   const { isFlex, reasons: flexReasons } = computeFlex(answers, { forceFlex: soln.isFlex });
+  const expenseOK = (expenseType || "").toLowerCase().includes("customer");
+  const progOK = /(yhdp|blueprint)/i.test(`${soln.program||""} ${soln.billedTo||""}`);
+  const isFlexFinal = isFlex && expenseOK && progOK;
 
   // Customer resolution (covers split first/last)
   const cFirst = textify(getAns(answers, INVOICE_SCHEMA.globals.firstName));
@@ -215,7 +223,7 @@ function normalizeInvoice(sub) {
     paymentMethod,
     note,
     files: soln.files_typed?.all || [],    // merge all files (typed buckets still accessible via soln.files_typed)
-    isFlex,
+    isFlex: isFlexFinal,
     flexReasons,
     raw: sub,
     rawStatus,
