@@ -533,7 +533,10 @@ export default function LineItems() {
   const { data, error, isLoading, mutate } = useSWR("/api/purchases", fetcher, {
     refreshInterval: 300000,
   });
-  const items = data?.items || [];
+  const items = (data?.items || []).filter((r) => {
+    const st = String(r?.raw?.status || r?.rawStatus || "").toUpperCase();
+    return st === "" || st === "ACTIVE";
+  });
 
   const [q, setQ] = React.useState("");
   const [from, setFrom] = React.useState("");

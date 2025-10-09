@@ -16,11 +16,13 @@ async function fetchSubsAll(formId, pageLimit = 500) {
 
   while (true) {
     const url = new URL(`${API}/form/${formId}/submissions`);
-    url.searchParams.set("apiKey", KEY);              // <-- use query param
+    url.searchParams.set("apiKey", KEY);
     url.searchParams.set("limit", String(pageLimit));
     url.searchParams.set("offset", String(offset));
     url.searchParams.set("orderby", "created_at");
     url.searchParams.set("answers", "yes");
+    // Ask Jotform for ACTIVE only; still post-filter below in case API ignores it.
+    url.searchParams.set("filter", JSON.stringify({ status: "ACTIVE" }));
 
     const res = await fetch(url.toString(), { cache: "no-store" });
     const text = await res.text();
@@ -29,7 +31,10 @@ async function fetchSubsAll(formId, pageLimit = 500) {
       throw new Error(`Jotform ${formId} ${res.status} ${res.statusText} — ${text.slice(0, 500)}`);
     }
     const json = JSON.parse(text);
-    const chunk = json?.content || [];
+    const chunk = (json?.content || []).filter((s) => {
+      const st = String(s?.status || "").toUpperCase();
+      return st === "" || st === "ACTIVE";
+    });
     all.push(...chunk);
     if (chunk.length < pageLimit) break;
     offset += pageLimit;
@@ -49,6 +54,11 @@ export default async function handler(req, res) {
     const items = []
       .concat(...cardsRaw.map(normalizeSubmission))
       .concat(...invoicesRaw.map(normalizeSubmission))
+      // ignore anything not ACTIVE if it ever got this far
+      .filter((r) => {
+        const st = String(r?.raw?.status || r?.rawStatus || "").toUpperCase();
+        return st === "" || st === "ACTIVE";
+      })
       .map((r) => {
         let type = "Invoice";
         if (String(r.source).toLowerCase().includes("credit")) {

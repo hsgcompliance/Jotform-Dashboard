@@ -16,9 +16,12 @@ export default async function handler(req, res) {
     while (true) {
       const { data } = await axios.get(
         `https://api.jotform.com/form/${formId}/submissions`,
-        { params: { apiKey, limit, offset, answers: "yes" } }
+        { params: { apiKey, limit, offset, answers: "yes", filter: JSON.stringify({ status: "ACTIVE" }) } }
       );
-      const chunk = data?.content ?? [];
+      const chunk = (data?.content ?? []).filter((s) => {
+        const st = String(s?.status || "").toUpperCase();
+        return st === "" || st === "ACTIVE";
+      });
       all.push(...chunk);
       if (chunk.length < limit) break;
       offset += limit;
