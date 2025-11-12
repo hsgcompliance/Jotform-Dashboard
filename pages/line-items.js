@@ -24,9 +24,104 @@ import {
   Chip,
   Tooltip,
   DialogActions,
+  Checkbox,
+  FormControlLabel,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import FilterAltIcon from "@mui/icons-material/FilterAlt";
+
+/* -------------- blob hooks --------------*/
+const GET_URL = "/api/line-items-store";
+
+const initialStore = { version: 1, updatedAt: "", invoiced: {}, archive: {} };
+
+export function useLineItemsStore() {
+  const [store, setStore] = React.useState(initialStore);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState(null);
+
+  React.useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const r = await fetch(GET_URL, { cache: "no-store" });
+        const j = await r.json();
+        if (!alive) return;
+        if (j?.ok && j?.store) setStore(j.store);
+        else setError(j?.error || "Failed to load store");
+      } catch (e) {
+        if (alive) setError(String(e?.message || e));
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  const persist = async (next) => {
+    const prev = store;
+    setStore(next); // optimistic
+    const r = await fetch(GET_URL, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(next),
+   });
+   if (!r.ok) {
+     // rollback
+     setStore(prev);
+     const msg = await r.text().catch(() => "");
+     throw new Error(`Persist failed: ${r.status} ${r.statusText} ${msg}`);
+   }
+  };
+
+  const isInvoiced = (id) => !!store.invoiced?.[id];
+
+  const toSnippet = (row) => ({
+    id: row.id,
+    baseId: row.baseId || row.id,
+    createdAt: row._displayDate || row.createdAt || "",
+    source: row.source || "",
+    type: row._type?.label || (row._type?.key || ""),
+    amount: Number(row.amount || 0),
+    merchant: row.merchant || "",
+    program: row.program || row.program_raw || "",
+    billedTo: row.billedTo || row.billed_to_raw || "",
+    customer: row.customer || "",
+    card: row.card || "",
+    cardBucket: row.card_bucket || row.cardBucket || "",
+    isFlex: row.isFlex === true || row.submissionIsFlex === true,
+    email: row._email || "",
+    descriptor: row.descriptor || "",
+  });
+
+  const markInvoiced = async (row) => {
+    const id = row.id;
+    const now = new Date().toISOString();
+    const snippet = toSnippet(row);
+    const next = {
+      ...store,
+      updatedAt: now,
+      invoiced: { ...(store.invoiced || {}), [id]: true },
+      archive:  { ...(store.archive  || {}), [id]: store.archive?.[id] || snippet },
+    };
+    await persist(next);
+  };
+
+  const unmarkInvoiced = async (id) => {
+    const now = new Date().toISOString();
+    const nextInv = { ...(store.invoiced || {}) };
+    delete nextInv[id];
+    // Keep archive by design (reference history). If you want hard-remove, also delete store.archive[id].
+    const next = { ...store, updatedAt: now, invoiced: nextInv };
+    await persist(next);
+  };
+
+  return {
+    store, loading, error,
+    isInvoiced, markInvoiced, unmarkInvoiced,
+  };
+}
+
 
 /* ---------------- fetch ---------------- */
 const fetcher = (u) => fetch(u).then((r) => r.json());
@@ -88,6 +183,7 @@ function decideType(row) {
   const bucket = bucketCard(cardName);
   if (bucket === "Youth") return { key: "youth", label: "Youth Card" };
   if (bucket === "Housing") return { key: "housing", label: "Housing Card" };
+  if (bucket === "MAD") return {key: "mad", label: "MAD Card"};
   return { key: "card", label: "Card" };
 }
 
@@ -199,6 +295,8 @@ const typeChipStyles = (key) => {
       return { bgcolor: "#fff4e5", color: "#8a3b00", borderColor: "#ffd8a8" };
     case "youth":
       return { bgcolor: "#efe2ff", color: "#5b21a2", borderColor: "#d1b3ff" };
+    case "mad":
+      return { bgcolor: "#e8fff1", color: "#0f5132", borderColor: "#b6f0d2" };
     default:
       return { bgcolor: "#eef2f7", color: "#374151", borderColor: "#d7dde5" };
   }
@@ -533,6 +631,8 @@ export default function LineItems() {
   const { data, error, isLoading, mutate } = useSWR("/api/purchases", fetcher, {
     refreshInterval: 300000,
   });
+  const { store, loading: storeLoading, isInvoiced, markInvoiced, unmarkInvoiced } = useLineItemsStore();
+
   const items = (data?.items || []).filter((r) => {
     const st = String(r?.raw?.status || r?.rawStatus || "").toUpperCase();
     return st === "" || st === "ACTIVE";
@@ -544,6 +644,7 @@ export default function LineItems() {
   const [sortOrder, setSortOrder] = React.useState("desc"); // 'asc' | 'desc'
   const [sortField, setSortField] = React.useState("date"); // 'date' | 'amount' | 'note_any'
   const [typeFilter, setTypeFilter] = React.useState("all");
+  const [showAll, setShowAll] = React.useState(false); // default hide invoiced
 
   const [modalRow, setModalRow] = React.useState(null);
   const [modalTab, setModalTab] = React.useState(0); // 0 structured, 1 raw item, 2 raw submission
@@ -587,11 +688,13 @@ export default function LineItems() {
         : x.program || "";
 
       const card_bucket =
-        (x.card || "").toLowerCase().includes("youth")
-          ? "Youth"
-          : (x.card || "").toLowerCase().includes("housing")
-          ? "Housing"
-          : x.cardBucket || "";
+      (x.card || "").toLowerCase().includes("youth")
+        ? "Youth"
+        : (x.card || "").toLowerCase().includes("housing")
+        ? "Housing"
+        : (x.card || "").toLowerCase().includes("mad")
+        ? "MAD"
+        : (x.cardBucket || "");
 
       const billed_to_raw = x.billedTo || "";
       const project_raw = x.project || "";
@@ -669,8 +772,9 @@ export default function LineItems() {
     return enriched
       .filter((r) => (typeFilter === "all" ? true : r._type.key === typeFilter))
       .filter((r) => within(r, from, to))
-      .filter((r) => !txt || answersHaystack(r).includes(txt));
-  }, [enriched, q, from, to, typeFilter]);
+      .filter((r) => !txt || answersHaystack(r).includes(txt))
+      .filter((r) => showAll || !isInvoiced(r.id));
+  }, [enriched, q, from, to, typeFilter, showAll, isInvoiced]);
 
   // Then optional ad-hoc rules + sort
   const filtered = React.useMemo(() => {
@@ -706,7 +810,7 @@ export default function LineItems() {
           flexWrap: "wrap",
         }}
       >
-        <h1 style={{ margin: 0 }}>Line Items</h1>
+        <h1 style={{ margin: 0 }}>Line Items</h1>{storeLoading && <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.7 }}>Syncing…</span>}
         <Button size="small" onClick={() => mutate()}>
           Reload
         </Button>
@@ -759,7 +863,18 @@ export default function LineItems() {
           <MenuItem value="invoice">Invoice</MenuItem>
           <MenuItem value="housing">Housing Card</MenuItem>
           <MenuItem value="youth">Youth Card</MenuItem>
+          <MenuItem value="mad">MAD</MenuItem>
         </TextField>
+        <FormControlLabel
+          control={
+            <Checkbox
+              size="small"
+              checked={showAll}
+              onChange={(e) => setShowAll(e.target.checked)}
+            />
+          }
+          label="Show all (incl. invoiced)"
+        />
 
         {/* Ad-hoc (front-end) filter using AdvancedBudgetEditorModal */}
         <Tooltip title="Custom filter (nested rules)">
@@ -794,13 +909,15 @@ export default function LineItems() {
               <Th>Amount</Th>
               <Th>Submitted By</Th>
               <Th>Email</Th>
+              <Th>Status</Th>
               <Th></Th>
             </tr>
           </thead>
           <tbody>
             {filtered.map((r, idx) => {
-              const rowId = `${r.id}-${idx}`;
+              const rowId = r.id;
               const typeStyle = typeChipStyles(r._type.key);
+              const isInv = isInvoiced(rowId);
               return (
                 <tr key={rowId}>
                   <Td title={displayDate(r)}>{r._displayDate}</Td>
@@ -820,6 +937,25 @@ export default function LineItems() {
                   <Td>${Number(r.amount || 0).toFixed(2)}</Td>
                   <Td>{r._submittedBy}</Td>
                   <Td>{r._email}</Td>
+                  <Td style={{ whiteSpace: "nowrap" }}>
+                    <Chip
+                      size="small"
+                      clickable
+                      onClick={async () => {
+                        if (isInv) await unmarkInvoiced(rowId);
+                        else await markInvoiced(r);
+                      }}
+                      sx={{
+                        borderWidth: 1,
+                        mr: 1,
+                        ...(isInv
+                          ? { bgcolor: "#fff4f4", color: "#842029", borderColor: "#f1aeb5" }   // "danger/soft"
+                          : { bgcolor: "#eefaf1", color: "#0f5132", borderColor: "#b6f0d2" }), // "success/soft"
+                      }}
+                      label={isInv ? "Invoiced — click to unmark" : "Ready — click to invoice"}
+                      variant="outlined"
+                    />
+                  </Td>
                   <Td style={{ whiteSpace: "nowrap" }}>
                     <Button
                       size="small"
