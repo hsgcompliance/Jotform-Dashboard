@@ -247,7 +247,6 @@ const defaultCfg = {
 };
 
 /* ---------------- Blob-backed config ---------------- */
-/* ---------------- Blob-backed config ---------------- */
 function useConfig() {
   const [cfg, setCfg] = React.useState(defaultCfg);
   const [loading, setLoading] = React.useState(true);
@@ -258,38 +257,37 @@ function useConfig() {
       try {
         const r = await fetch("/api/budget-config");
         const j = await r.json();
+        if (!mounted) return;
 
-        if (!mounted || !j?.ok) return;
+        if (j?.ok && j?.config) {
+          const incoming = j.config || {};
 
-        let cfgIn;
-
-        if (j.config) {
-          // ✅ Blob is canonical. Do NOT merge in default budgets.
-          const raw = j.config;
-
-          cfgIn = {
-            // enforce shape, but don’t inject default budgets/ranges
-            budgets: Array.isArray(raw.budgets) ? raw.budgets : [],
-            slices: Array.isArray(raw.slices) ? raw.slices : [],
-            limits: raw.limits || {},
-            flexCap: raw.flexCap ?? 500,
-            flexClients: raw.flexClients || [],
+          // Use blob as the source of truth; only fall back to defaults
+          // for stuff that *isn’t* stored in the blob yet.
+          const normalized = {
+            budgets: Array.isArray(incoming.budgets) ? incoming.budgets : [],
+            slices: Array.isArray(incoming.slices) ? incoming.slices : [],
+            limits: incoming.limits ?? defaultCfg.limits ?? {},
+            flexCap: incoming.flexCap ?? defaultCfg.flexCap ?? 500,
+            flexClients: Array.isArray(incoming.flexClients)
+              ? incoming.flexClients
+              : [],
           };
+
+          normalized.flexClients = (normalized.flexClients || []).map(c => ({
+            ...c,
+            show: c.show !== false,
+            key: normalizeClientKey(c.key || c.name),
+          }));
+
+          setCfg(normalized);
         } else {
-          // First run / no blob yet → use template defaults once
-          cfgIn = defaultCfg;
+          // No blob yet → fall back to hardcoded defaults
+          setCfg(defaultCfg);
         }
-
-        // Normalize flex clients
-        cfgIn.flexClients = (cfgIn.flexClients || []).map((c) => ({
-          ...c,
-          show: c.show !== false,
-          key: normalizeClientKey(c.key || c.name),
-        }));
-
-        setCfg(cfgIn);
       } catch (e) {
         console.warn("budget-config GET failed, using defaults", e);
+        if (mounted) setCfg(defaultCfg);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -301,8 +299,7 @@ function useConfig() {
   }, []);
 
   const save = async (next) => {
-    // optimistic
-    setCfg(next);
+    setCfg(next); // optimistic
     await fetch("/api/budget-config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -1185,6 +1182,17 @@ export default function Budgets() {
     }
     return m;
   }, [enriched, flexSeedByClient]);
+
+  if (isFlex && x.isFlex !== true) {
+    console.log("Heuristic flex hit", {
+      id: x.id,
+      program_raw,
+      billed_to_raw,
+      expenseType: x.expenseType,
+      source: x.source,
+      rawAnswers,
+    });
+  }
 
   // Card monthly aggregates (slicer applies only to card section)
   const cardMonthly = React.useMemo(() => {
