@@ -1118,6 +1118,17 @@ export default function Budgets() {
 
       const expense_type_raw = x.expenseType || x.expense_type_raw || "";
 
+        if (isFlex && x.isFlex !== true) {
+          console.log("Heuristic flex hit", {
+            id: x.id,
+            program_raw,
+            billed_to_raw,
+            expenseType: x.expenseType,
+            source: x.source,
+            rawAnswers,
+          });
+      }
+
       // Virtual rollup text for bucket rules
       const bucket_text = [
         program_raw,
@@ -1182,17 +1193,6 @@ export default function Budgets() {
     }
     return m;
   }, [enriched, flexSeedByClient]);
-
-  if (isFlex && x.isFlex !== true) {
-    console.log("Heuristic flex hit", {
-      id: x.id,
-      program_raw,
-      billed_to_raw,
-      expenseType: x.expenseType,
-      source: x.source,
-      rawAnswers,
-    });
-  }
 
   // Card monthly aggregates (slicer applies only to card section)
   const cardMonthly = React.useMemo(() => {
