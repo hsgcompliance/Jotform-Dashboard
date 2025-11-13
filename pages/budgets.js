@@ -247,42 +247,69 @@ const defaultCfg = {
 };
 
 /* ---------------- Blob-backed config ---------------- */
+/* ---------------- Blob-backed config ---------------- */
 function useConfig() {
   const [cfg, setCfg] = React.useState(defaultCfg);
   const [loading, setLoading] = React.useState(true);
+
   React.useEffect(() => {
     let mounted = true;
     (async () => {
       try {
         const r = await fetch("/api/budget-config");
         const j = await r.json();
-        if (mounted && j?.ok && j?.config) {
-          const cfgIn = { ...defaultCfg, ...j.config };
-          cfgIn.flexClients = (cfgIn.flexClients || []).map(c => ({
-            ...c,
-            show: c.show !== false,
-            key: normalizeClientKey(c.key || c.name),
-          }));
-          setCfg(cfgIn);
+
+        if (!mounted || !j?.ok) return;
+
+        let cfgIn;
+
+        if (j.config) {
+          // ✅ Blob is canonical. Do NOT merge in default budgets.
+          const raw = j.config;
+
+          cfgIn = {
+            // enforce shape, but don’t inject default budgets/ranges
+            budgets: Array.isArray(raw.budgets) ? raw.budgets : [],
+            slices: Array.isArray(raw.slices) ? raw.slices : [],
+            limits: raw.limits || {},
+            flexCap: raw.flexCap ?? 500,
+            flexClients: raw.flexClients || [],
+          };
+        } else {
+          // First run / no blob yet → use template defaults once
+          cfgIn = defaultCfg;
         }
+
+        // Normalize flex clients
+        cfgIn.flexClients = (cfgIn.flexClients || []).map((c) => ({
+          ...c,
+          show: c.show !== false,
+          key: normalizeClientKey(c.key || c.name),
+        }));
+
+        setCfg(cfgIn);
       } catch (e) {
         console.warn("budget-config GET failed, using defaults", e);
       } finally {
         if (mounted) setLoading(false);
       }
     })();
+
     return () => {
       mounted = false;
     };
   }, []);
+
   const save = async (next) => {
-    setCfg(next); // optimistic
+    // optimistic
+    setCfg(next);
     await fetch("/api/budget-config", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(next),
     });
   };
+
   return [cfg, save, loading];
 }
 
