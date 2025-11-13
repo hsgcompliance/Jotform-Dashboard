@@ -43,17 +43,46 @@ function toISO(s) {
 
 // Flex tagging (centralized)
 function computeFlex(answers, extras = {}) {
-  const hay = JSON.stringify(answers || {}).toLowerCase();
+  const pieces = [];
+
+  // Only pull from answer-ish fields, not labels/prompts
+  for (const v of Object.values(answers || {})) {
+    if (!v) continue;
+
+    // JotForm normal shape: { answer: string | array, prettyFormat?: string, ... }
+    const ans = v.answer;
+    if (typeof ans === "string") {
+      pieces.push(ans);
+    } else if (Array.isArray(ans)) {
+      pieces.push(...ans.map((x) => String(x)));
+    }
+
+    // Some widgets put useful text into prettyFormat
+    if (typeof v.prettyFormat === "string") {
+      pieces.push(v.prettyFormat);
+    }
+
+    // Very defensive: if a field stores a raw value prop
+    if (typeof v.value === "string") {
+      pieces.push(v.value);
+    }
+  }
+
+  const hay = pieces.join(" ").toLowerCase();
   const reasons = [];
-  // Any “flex” mention (covers “yhdp flex”, “flex funds”, etc.)
+
+  // Any “flex” mention in *values* (covers “yhdp flex”, “flex funds”, etc.)
   if (/\byhdp\b.*\bflex\b/.test(hay) || /\bflex\s*fund/.test(hay) || /\bflex\b/.test(hay)) {
     reasons.push("text:flex");
   }
+
   // Card per-txn toggles can pass through via extras
   if (extras.anyFlexTxn) reasons.push("txn:flex");
+
   const isFlex = reasons.length > 0 || !!extras.forceFlex;
   return { isFlex, reasons };
 }
+
 
 // Make a stable client key (used for Flex to-date/caps grouping)
 function makeCustomerKey(s) {

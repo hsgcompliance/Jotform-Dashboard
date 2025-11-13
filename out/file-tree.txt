@@ -1,9 +1,10 @@
-Jotform-Dashboard/
+next-dashboard-starter/
 ├─ components/
 │  ├─ AdvancedBudgetEditorModal.js
 │  ├─ AnswerTable.js
 │  ├─ BudgetConfigModal.js
 │  ├─ CardLimitForm.js
+│  ├─ DownloadBar.js
 │  ├─ ErrorBoundary.js
 │  ├─ FormPicker.js
 │  ├─ formSchemas.js
@@ -27,13 +28,18 @@ Jotform-Dashboard/
 │  │  ├─ budget-config.js
 │  │  ├─ card-tracker.js
 │  │  ├─ clone.js
+│  │  ├─ file.js
 │  │  ├─ forms.js
 │  │  ├─ latest.js
+│  │  ├─ line-items-store.js
+│  │  ├─ pdf.js
 │  │  ├─ purchases.js
 │  │  ├─ signDocs.js
 │  │  ├─ signForms.js
 │  │  ├─ submissions.js
 │  │  └─ webhooks.js
+│  ├─ form/
+
 │  ├─ _app.js
 │  ├─ budgets.js
 │  ├─ builder.js
@@ -45,6 +51,9 @@ Jotform-Dashboard/
 ├─ scripts/
 │  ├─ fileTree.mjs
 │  └─ samplePayLoads.mjs
+├─ .env.example
+├─ .env.local
 ├─ .gitignore
+├─ .last_commit
 ├─ next.config.js
 └─ package.json
