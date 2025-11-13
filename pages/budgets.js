@@ -247,12 +247,14 @@ const defaultCfg = {
 };
 
 /* ---------------- Blob-backed config ---------------- */
+/* ---------------- Blob-backed config ---------------- */
 function useConfig() {
   const [cfg, setCfg] = React.useState(defaultCfg);
   const [loading, setLoading] = React.useState(true);
 
   React.useEffect(() => {
     let mounted = true;
+
     (async () => {
       try {
         const r = await fetch("/api/budget-config");
@@ -262,27 +264,38 @@ function useConfig() {
         if (j?.ok && j?.config) {
           const incoming = j.config || {};
 
-          // Use blob as the source of truth; only fall back to defaults
-          // for stuff that *isn’t* stored in the blob yet.
           const normalized = {
-            budgets: Array.isArray(incoming.budgets) ? incoming.budgets : [],
-            slices: Array.isArray(incoming.slices) ? incoming.slices : [],
-            limits: incoming.limits ?? defaultCfg.limits ?? {},
-            flexCap: incoming.flexCap ?? defaultCfg.flexCap ?? 500,
+            budgets: Array.isArray(incoming.budgets)
+              ? incoming.budgets
+              : defaultCfg.budgets,
+            slices: Array.isArray(incoming.slices)
+              ? incoming.slices
+              : defaultCfg.slices,
+            limits:
+              typeof incoming.limits === "object" && incoming.limits
+                ? incoming.limits
+                : defaultCfg.limits,
+            flexCap:
+              typeof incoming.flexCap === "number"
+                ? incoming.flexCap
+                : defaultCfg.flexCap,
             flexClients: Array.isArray(incoming.flexClients)
               ? incoming.flexClients
-              : [],
+              : defaultCfg.flexClients,
           };
 
-          normalized.flexClients = (normalized.flexClients || []).map(c => ({
+          normalized.flexClients = (normalized.flexClients || []).map((c) => ({
             ...c,
             show: c.show !== false,
             key: normalizeClientKey(c.key || c.name),
           }));
 
           setCfg(normalized);
+        } else if (j?.ok && !j?.config) {
+          // No blob yet → use hardcoded defaults
+          setCfg(defaultCfg);
         } else {
-          // No blob yet → fall back to hardcoded defaults
+          console.warn("budget-config GET error:", j?.error || j);
           setCfg(defaultCfg);
         }
       } catch (e) {
@@ -299,12 +312,18 @@ function useConfig() {
   }, []);
 
   const save = async (next) => {
-    setCfg(next); // optimistic
-    await fetch("/api/budget-config", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(next),
-    });
+    // optimistic local update
+    setCfg(next);
+    try {
+      await fetch("/api/budget-config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(next),
+      });
+    } catch (e) {
+      console.warn("budget-config PUT failed", e);
+      // optional: you could re-fetch here, but for now we just log
+    }
   };
 
   return [cfg, save, loading];

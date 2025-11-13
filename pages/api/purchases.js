@@ -6,10 +6,10 @@ export const config = { api: { bodyParser: false } };
 const API = "https://api.jotform.com";
 const KEY = process.env.JOTFORM_API_KEY;
 
-const FORM_CARDS   = "251878265158166"; // Credit Cards
-const FORM_INVOICE = "252674777246167"; // Invoice
+const FORM_CARDS = "251878265158166";
+const FORM_INVOICE = "252674777246167";
 
-async function fetchSubsAll(formId, pageLimit = 500) {
+async function fetchSubsAll(formId, pageLimit = 500, statusFilter = "ACTIVE") {
   if (!KEY) throw new Error("Missing JOTFORM_API_KEY");
   let offset = 0;
   const all = [];
@@ -21,44 +21,97 @@ async function fetchSubsAll(formId, pageLimit = 500) {
     url.searchParams.set("offset", String(offset));
     url.searchParams.set("orderby", "created_at");
     url.searchParams.set("answers", "yes");
-    // Ask Jotform for ACTIVE only; still post-filter below in case API ignores it.
-    url.searchParams.set("filter", JSON.stringify({ status: "ACTIVE" }));
+
+    if (statusFilter === "ACTIVE") {
+      // Ask Jotform to only return ACTIVE, but still post-filter in case
+      url.searchParams.set("filter", JSON.stringify({ status: "ACTIVE" }));
+    }
 
     const res = await fetch(url.toString(), { cache: "no-store" });
     const text = await res.text();
+
     if (!res.ok) {
-      // bubble up real JT error so you can see it in the browser/script
-      throw new Error(`Jotform ${formId} ${res.status} ${res.statusText} — ${text.slice(0, 500)}`);
+      throw new Error(
+        `Jotform ${formId} ${res.status} ${res.statusText} — ${text.slice(
+          0,
+          500
+        )}`
+      );
     }
-    const json = JSON.parse(text);
-    const chunk = (json?.content || []).filter((s) => {
-      const st = String(s?.status || "").toUpperCase();
-      return st === "" || st === "ACTIVE";
-    });
+
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch (e) {
+      throw new Error(
+        `Jotform ${formId} returned non-JSON response: ${e?.message || e}`
+      );
+    }
+
+    const content = Array.isArray(json?.content) ? json.content : [];
+    const chunk =
+      statusFilter === "ACTIVE"
+        ? content.filter((s) => {
+            const st = String(s?.status || "").toUpperCase();
+            return st === "" || st === "ACTIVE";
+          })
+        : content;
+
     all.push(...chunk);
+
     if (chunk.length < pageLimit) break;
     offset += pageLimit;
   }
+
   return all;
 }
 
 export default async function handler(req, res) {
   try {
-    if (!KEY) return res.status(500).json({ error: "Missing JOTFORM_API_KEY" });
+    if (!KEY) {
+      return res.status(500).json({ error: "Missing JOTFORM_API_KEY" });
+    }
+
+    const { status, form, from, to } = req.query || {};
+
+    const statusFilter =
+      String(status || "").toUpperCase() === "ALL" ? "ALL" : "ACTIVE";
+
+    const wantCards =
+      !form || String(form).toLowerCase() === "cards" || String(form).toLowerCase() === "both";
+    const wantInvoices =
+      !form || String(form).toLowerCase() === "invoice" || String(form).toLowerCase() === "both";
 
     const [cardsRaw, invoicesRaw] = await Promise.all([
-      fetchSubsAll(FORM_CARDS),
-      fetchSubsAll(FORM_INVOICE),
+      wantCards ? fetchSubsAll(FORM_CARDS, 500, statusFilter) : Promise.resolve([]),
+      wantInvoices ? fetchSubsAll(FORM_INVOICE, 500, statusFilter) : Promise.resolve([]),
     ]);
 
-    const items = []
+    const allItems = []
       .concat(...cardsRaw.map(normalizeSubmission))
-      .concat(...invoicesRaw.map(normalizeSubmission))
-      // ignore anything not ACTIVE if it ever got this far
-      .filter((r) => {
-        const st = String(r?.raw?.status || r?.rawStatus || "").toUpperCase();
-        return st === "" || st === "ACTIVE";
-      })
+      .concat(...invoicesRaw.map(normalizeSubmission));
+
+    // Optional server-side status guard (in case older blobs slipped through)
+    let filtered = allItems.filter((r) => {
+      const st = String(r?.raw?.status || r?.rawStatus || "").toUpperCase();
+      if (statusFilter === "ALL") return true;
+      return st === "" || st === "ACTIVE";
+    });
+
+    // Optional date window (createdAt) if query supplies from/to
+    if (from || to) {
+      const fromTs = from ? new Date(`${from}T00:00:00`).getTime() : null;
+      const toTs = to ? new Date(`${to}T23:59:59`).getTime() : null;
+      filtered = filtered.filter((r) => {
+        const t = new Date(r.createdAt).getTime();
+        if (Number.isNaN(t)) return false;
+        if (fromTs != null && t < fromTs) return false;
+        if (toTs != null && t > toTs) return false;
+        return true;
+      });
+    }
+
+    const items = filtered
       .map((r) => {
         let type = "Invoice";
         if (String(r.source).toLowerCase().includes("credit")) {

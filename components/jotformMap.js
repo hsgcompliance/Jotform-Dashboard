@@ -286,23 +286,56 @@ function normalizeInvoice(sub) {
 // ──────────────────────────────────────────────────────────────────────────────
 // Public API
 // ──────────────────────────────────────────────────────────────────────────────
+// ──────────────────────────────────────────────────────────────────────────────
+// Public API
+// ──────────────────────────────────────────────────────────────────────────────
 export function normalizeSubmission(sub) {
-  const formId = String(sub?.form_id || "");
-  if (formId === "251878265158166") return normalizeCreditCard(sub);
-  if (formId === "252674777246167") return normalizeInvoice(sub);
+  const formId = String(sub?.form_id || "").trim();
 
-  // Unknown form: pass through as one row
+  // Known forms → fan out to their dedicated normalizers
+  if (formId === "251878265158166") {
+    // Credit cards
+    return normalizeCreditCard(sub);
+  }
+  if (formId === "252674777246167") {
+    // Invoices
+    return normalizeInvoice(sub);
+  }
+
+  // Unknown form: emit a single "pass-through" row that is still safe to consume
   const rawStatus = sub?.status || "";
+  const createdAt =
+    toISO(sub?.created_at) ||
+    toISO(sub?.updated_at) ||
+    new Date().toISOString();
+
+  // Best-effort customer string: scan answers for something that smells like a name
+  let customerGuess = "";
+  if (sub?.answers && typeof sub.answers === "object") {
+    for (const v of Object.values(sub.answers)) {
+      if (!v) continue;
+      const ans = v.answer;
+      if (typeof ans === "string" && ans.trim().length > 0) {
+        customerGuess = ans.trim();
+        break;
+      }
+    }
+  }
+
+  const customerKey = makeCustomerKey(customerGuess);
+
   return [
     {
       id: sub?.id,
       baseId: sub?.id,
       source: "unknown",
-      createdAt: sub?.created_at || new Date().toISOString(),
+      createdAt,
       amount: 0,
+      customer: textify(customerGuess),
+      customerKey,
       raw: sub,
       rawStatus,
-      customerKey: makeCustomerKey(sub?.answers?.customer || ""),
     },
   ];
 }
+
