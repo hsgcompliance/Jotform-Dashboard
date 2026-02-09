@@ -1,20 +1,28 @@
 // pages/api/signForms.js
-//returns all Sign workflow forms
-import axios from 'axios';
+import axios from "axios";
 
 export default async function handler(req, res) {
   const apiKey = process.env.JOTFORM_API_KEY;
-  if (req.method !== 'GET') return res.status(405).end();
+  const API = process.env.JOTFORM_API || "https://api.jotform.com";
+
+  if (!apiKey) return res.status(500).json({ error: "Missing JOTFORM_API_KEY" });
 
   try {
-    // Fetch all Sign workflows for this account
-    const { data } = await axios.get(
-      `https://api.jotform.com/user/signforms?apiKey=${apiKey}`
-    );
-    // data.content is an array of objects: { id, title, status, ... }
-    res.status(200).json(data.content || []);
+    const { data } = await axios.get(`${API}/user/signforms`, {
+      params: { apiKey },
+    });
+    return res.status(200).json({ content: data?.content || [] });
   } catch (err) {
-    console.error('Error fetching sign forms:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Could not fetch sign forms' });
+    const status = err?.response?.status || 500;
+    const detail = err?.response?.data || err?.message || String(err);
+
+    // ✅ If Sign API isn’t available, just return empty.
+    if (status === 401) {
+      console.warn("Sign forms not authorized; returning empty list.");
+      return res.status(200).json({ content: [], warning: "Sign forms not authorized", detail });
+    }
+
+    console.error("GET /user/signforms failed:", { status, detail });
+    return res.status(status).json({ error: "Failed to fetch sign forms", detail });
   }
 }

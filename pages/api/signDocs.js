@@ -1,5 +1,5 @@
 // pages/api/signDocs.js
-//given a Sign form ID, returns its signed‐document metadata
+//given a Sign form ID, returns its signed‐document metadata// jot form does not allow sign docs integration, this script does not work, but it is a placeholder for when/if they do allow it. It is based on the same pattern as the pdf.js api route, but points to the (undocumented) sign docs endpoint instead of the pdf endpoints.
 import axios from 'axios';
 
 export default async function handler(req, res) {

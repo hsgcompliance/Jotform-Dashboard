@@ -1,30 +1,27 @@
-import axios from 'axios';
+// pages/api/submission.js
+import axios from "axios";
 
 export default async function handler(req, res) {
-  const { id } = req.query;
-  if (!id) return res.status(400).json({ error: 'Missing form ID' });
+  if (req.method !== "GET") return res.status(405).end();
+
+  // accept either ?id= or ?submissionId=
+  const submissionId = req.query.submissionId || req.query.id;
+  if (!submissionId) return res.status(400).json({ error: "submissionId (or id) required" });
 
   const apiKey = process.env.JOTFORM_API_KEY;
+  const API = process.env.JOTFORM_API || "https://api.jotform.com";
 
-  const limit   = 1000;
-  let offset    = 0;
-  let allSubs   = [];
+  if (!apiKey) return res.status(500).json({ error: "Missing JOTFORM_API_KEY" });
 
   try {
-    while (true) {
-      const { data } = await axios.get(
-        `https://api.jotform.com/form/${id}/submissions`,
-        { params: { apiKey, limit, offset, answers: 'yes' } }
-      );
-
-      const chunk = data?.content ?? [];
-      allSubs.push(...chunk);
-      if (chunk.length < limit) break;
-      offset += limit;
-    }
-
-    res.status(200).json({ content: allSubs });
+    const { data } = await axios.get(`${API}/submission/${submissionId}`, {
+      params: { apiKey },
+    });
+    return res.status(200).json({ content: data?.content || null });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const status = err?.response?.status || 500;
+    const detail = err?.response?.data || err?.message || String(err);
+    console.error("GET /submission failed:", { submissionId, API, status, detail });
+    return res.status(status).json({ error: "Failed to fetch submission", detail });
   }
 }
