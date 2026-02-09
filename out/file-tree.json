@@ -136,6 +136,18 @@
       ]
     },
     {
+      "name": "lib",
+      "path": "lib",
+      "type": "dir",
+      "children": [
+        {
+          "name": "jotformEnv.js",
+          "path": "lib\\jotformEnv.js",
+          "type": "file"
+        }
+      ]
+    },
+    {
       "name": "next.config.js",
       "path": "next.config.js",
       "type": "file"
@@ -180,6 +192,11 @@
             {
               "name": "clone.js",
               "path": "pages\\api\\clone.js",
+              "type": "file"
+            },
+            {
+              "name": "cloneSubmission.js",
+              "path": "pages\\api\\cloneSubmission.js",
               "type": "file"
             },
             {
@@ -230,6 +247,11 @@
             {
               "name": "webhooks.js",
               "path": "pages\\api\\webhooks.js",
+              "type": "file"
+            },
+            {
+              "name": "_diag-jotform.js",
+              "path": "pages\\api\\_diag-jotform.js",
               "type": "file"
             }
           ]

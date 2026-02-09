@@ -1,5 +1,11 @@
+import fetch from "node-fetch";
+import { requireSession } from "../../lib/requireSession";
+
 // Securely proxy any uploaded-file URL (keeps API key off the client)
 export default async function handler(req, res) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
   try {
     const { url } = req.query;
     if (!url) return res.status(400).json({ error: 'Missing url' });

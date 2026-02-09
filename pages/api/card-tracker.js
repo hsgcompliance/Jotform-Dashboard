@@ -2,8 +2,12 @@
 // Returns flattened line-items for a credit-card form
 import axios from "axios";
 import { normalizeSubmission } from "../../components/jotformMap";
+import { requireSession } from "../../lib/requireSession";
 
 export default async function handler(req, res) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
   try {
     const formId = String(req.query.id ?? "251878265158166");
     const apiKey = process.env.JOTFORM_API_KEY;

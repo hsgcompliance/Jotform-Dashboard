@@ -1,5 +1,10 @@
 // Proxy to fetch a submission PDF (supports EU/HIPAA via env)
+import { requireSession } from "../../lib/requireSession";
+
 export default async function handler(req, res) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
   try {
     const { formId, submissionId, docId } = req.query;
     if (!formId || !submissionId) {

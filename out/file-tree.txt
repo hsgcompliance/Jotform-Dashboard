@@ -21,13 +21,17 @@ next-dashboard-starter/
 │  ├─ useAllForms.js
 │  ├─ useCachedForms.js
 │  └─ useFormTags.js
+├─ lib/
+│  └─ jotformEnv.js
 ├─ pages/
 │  ├─ api/
 │  │  ├─ auth/
 │  │  │  └─ [...nextauth].js
+│  │  ├─ _diag-jotform.js
 │  │  ├─ budget-config.js
 │  │  ├─ card-tracker.js
 │  │  ├─ clone.js
+│  │  ├─ cloneSubmission.js
 │  │  ├─ file.js
 │  │  ├─ forms.js
 │  │  ├─ latest.js

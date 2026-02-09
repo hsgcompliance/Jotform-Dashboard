@@ -1,5 +1,6 @@
 // pages/api/purchases.js
 import { normalizeSubmission } from "../../components/jotformMap";
+import { requireSession } from "../../lib/requireSession";
 
 export const config = { api: { bodyParser: false } };
 
@@ -10,6 +11,7 @@ const FORM_CARDS = "251878265158166";
 const FORM_INVOICE = "252674777246167";
 
 async function fetchSubsAll(formId, pageLimit = 500, statusFilter = "ACTIVE") {
+  
   if (!KEY) throw new Error("Missing JOTFORM_API_KEY");
   let offset = 0;
   const all = [];
@@ -67,6 +69,9 @@ async function fetchSubsAll(formId, pageLimit = 500, statusFilter = "ACTIVE") {
 }
 
 export default async function handler(req, res) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
   try {
     if (!KEY) {
       return res.status(500).json({ error: "Missing JOTFORM_API_KEY" });

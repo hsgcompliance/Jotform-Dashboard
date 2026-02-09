@@ -1,7 +1,11 @@
 // pages/api/signForms.js
 import axios from "axios";
+import { requireSession } from "../../lib/requireSession";
 
 export default async function handler(req, res) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
   const apiKey = process.env.JOTFORM_API_KEY;
   const API = process.env.JOTFORM_API || "https://api.jotform.com";
 

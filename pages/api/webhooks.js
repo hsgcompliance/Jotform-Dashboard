@@ -1,8 +1,12 @@
 import axios from 'axios';
+import { requireSession } from "../../lib/requireSession";
 
 export default async function handler(req, res) {
   const { method, query: { form, url }, body } = req;
   const apiKey = process.env.JOTFORM_API_KEY;
+
+  const session = await requireSession(req, res);
+  if (!session) return;
 
   if (method === 'GET') {
     const { data } = await axios.get(`https://api.jotform.com/form/${form}/webhooks?apiKey=${apiKey}`);

@@ -1,5 +1,6 @@
 // pages/api/line-items-store.js
 import { put, list } from "@vercel/blob";
+import { requireSession } from "../../lib/requireSession";
 
 const BLOB_KEY = process.env.BLOB_READ_WRITE_TOKEN; // Vercel env var
 const NAME = "line-items-store-v1.json";
@@ -37,6 +38,9 @@ function sanitizeStore(input) {
 }
 
 export default async function handler(req, res) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
   const inDev = process.env.NODE_ENV !== "production";
 
   if (!BLOB_KEY) {

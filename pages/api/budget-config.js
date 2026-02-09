@@ -1,5 +1,6 @@
 // pages/api/budget-config.js
 import { put, list } from "@vercel/blob";
+import { requireSession } from "../../lib/requireSession";
 
 const BLOB_KEY = process.env.BLOB_READ_WRITE_TOKEN;
 const NAME = "budgets-v2.json";
@@ -34,6 +35,9 @@ async function readLatestConfig() {
 }
 
 export default async function handler(req, res) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
   const inDev = process.env.NODE_ENV !== "production";
 
   // Token missing → allow GET in dev with null config, block PUT

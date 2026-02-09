@@ -1,6 +1,7 @@
 // pages/api/cloneSubmission.js
 import axios from "axios";
 import { JOTFORM_API, JOTFORM_WEB, JOTFORM_API_KEY } from "../../lib/jotformEnv";
+import { requireSession } from "../../lib/requireSession";
 
 function append(params, parts, value) {
   if (value === null || value === undefined) return;
@@ -20,6 +21,9 @@ function append(params, parts, value) {
 }
 
 export default async function handler(req, res) {
+  const session = await requireSession(req, res);
+  if (!session) return;
+
   if (req.method !== "POST") return res.status(405).end();
   if (!JOTFORM_API_KEY) return res.status(500).json({ error: "Missing JOTFORM_API_KEY" });
 
