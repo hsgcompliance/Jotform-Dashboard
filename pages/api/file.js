@@ -1,4 +1,3 @@
-import fetch from "node-fetch";
 import { requireSession } from "../../lib/requireSession";
 
 // Securely proxy any uploaded-file URL (keeps API key off the client)
