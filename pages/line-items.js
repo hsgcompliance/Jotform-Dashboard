@@ -1,6 +1,7 @@
 // pages/line-items.js
 import React from "react";
 import useSWR from "swr";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import { bucketCard } from "../components/jotformMap";
 import {
   CC_SCHEMA,
@@ -29,6 +30,7 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import FilterAltIcon from "@mui/icons-material/FilterAlt";
+
 
 /* -------------- blob hooks --------------*/
 const GET_URL = "/api/line-items-store";
@@ -127,6 +129,12 @@ export function useLineItemsStore() {
 const fetcher = (u) => fetch(u).then((r) => r.json());
 
 /* ---------------- helpers ---------------- */
+function ccCheckoutTotals(answers) {
+  const txns = Array.from(iterateCreditCardTxns(answers || {}));
+  const total = txns.reduce((a, t) => a + Number(t.amount || 0), 0);
+  return { count: txns.length, total };
+}
+
 const stripHtml = (s = "") => String(s).replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
 
 /** Decide if row represents an invoice */
@@ -164,6 +172,28 @@ const within = (row, from, to) => {
   }
   return true;
 };
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // fallback
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.top = "-1000px";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
 
 function getSubmittedBy(row) {
   if (row.purchaser && String(row.purchaser).trim()) return row.purchaser;
@@ -479,6 +509,10 @@ function InvoiceStructuredView({ row }) {
               <Row label="Project" value={soln.project || soln.projectOther || "—"} />
               <Row label="Program (resolved)" value={soln.program || "—"} />
               <Row
+                  label="Purpose / Detail"
+                  value={a(INVOICE_SCHEMA.globals.purposeDetail) || ""}
+                />
+              <Row
                 label="Customer"
                 value={row.customer || [first, last].filter(Boolean).join(" ") || "—"}
               />
@@ -505,6 +539,10 @@ function InvoiceStructuredView({ row }) {
                 value={a(INVOICE_SCHEMA.programPath.multiToggle) || "—"}
               />
               <Row label="Primary Program (resolved)" value={soln.program || "—"} />
+              <Row label="Service Type" value={serviceType || "—"} />
+                {/other/i.test(serviceType) && (
+                  <Row label="Other Service" value={otherService || "—"} />
+                )}
               {showWIOA && (
                 <Row
                   label="WIOA Scope / WEX"
@@ -1030,7 +1068,26 @@ export default function LineItems() {
                 {displayDate(modalRow)} &nbsp; | &nbsp;
                 <b>Type: </b>
                 {modalRow._type?.label} &nbsp; | &nbsp;
-                <b>Amount: </b>${Number(modalRow.amount || 0).toFixed(2)} &nbsp; | &nbsp;
+                {(() => {
+                  const isCC = String(modalRow.source || "").toLowerCase().includes("credit");
+                  if (!isCC) return (
+                    <>
+                      <b>Amount: </b>${Number(modalRow.amount || 0).toFixed(2)} &nbsp; | &nbsp;
+                    </>
+                  );
+                  const { count, total } = ccCheckoutTotals(modalRow.raw?.answers || {});
+                  return (
+                    <>
+                      <b>Txn Amount: </b>${Number(modalRow.amount || 0).toFixed(2)}
+                      {count > 1 && (
+                        <>
+                          &nbsp; | &nbsp;<b>Checkout Total:</b> ${Number(total || 0).toFixed(2)}
+                        </>
+                      )}
+                      &nbsp; | &nbsp;
+                    </>
+                  );
+                })()}
                 <b>Submitted By: </b>
                 {getSubmittedBy(modalRow) || "—"}
                 {isYHDPFlex(modalRow) && <span style={{ marginLeft: 8 }}>{pill("YHDP Flex")}</span>}
@@ -1057,9 +1114,58 @@ export default function LineItems() {
                   />
                 ))}
 
-              {modalTab === 1 && <pre style={pre}>{JSON.stringify(modalRow, null, 2)}</pre>}
+              {modalTab === 1 && (
+                <div style={{ position: "relative" }}>
+                  <Tooltip title="Copy JSON">
+                    <IconButton
+                      size="small"
+                      onClick={async () => {
+                        const ok = await copyToClipboard(JSON.stringify(modalRow, null, 2));
+                        if (!ok) alert("Copy failed");
+                      }}
+                      sx={{
+                        position: "absolute",
+                        top: 8,
+                        right: 8,
+                        bgcolor: "#fff",
+                        border: "1px solid #eee",
+                        zIndex: 2,
+                        "&:hover": { bgcolor: "#f7f7f7" },
+                      }}
+                    >
+                      <ContentCopyIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <pre style={{ ...pre, paddingTop: 36 }}>{JSON.stringify(modalRow, null, 2)}</pre>
+                </div>
+              )}
 
-              {modalTab === 2 && <pre style={pre}>{JSON.stringify(modalRow.raw || {}, null, 2)}</pre>}
+              {modalTab === 2 && (
+                <div style={{ position: "relative" }}>
+                  <Tooltip title="Copy JSON">
+                    <IconButton
+                      size="small"
+                      onClick={async () => {
+                        const ok = await copyToClipboard(JSON.stringify(modalRow.raw || {}, null, 2));
+                        if (!ok) alert("Copy failed");
+                      }}
+                      sx={{
+                        position: "absolute",
+                        top: 8,
+                        right: 8,
+                        bgcolor: "#fff",
+                        border: "1px solid #eee",
+                        zIndex: 2,
+                        "&:hover": { bgcolor: "#f7f7f7" },
+                      }}
+                    >
+                      <ContentCopyIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <pre style={{ ...pre, paddingTop: 36 }}>{JSON.stringify(modalRow.raw || {}, null, 2)}</pre>
+                </div>
+              )}
+
             </>
           )}
         </DialogContent>

@@ -24,7 +24,7 @@ export const CC_SCHEMA = {
       purpose: "85",
       cost: "86",
       supportiveProgram: "169",   // "Supportive Services Program"
-      programOperations: null,     // not used when "For a Customer"
+      programOperations: "174",     // not used when "For a Customer"
       customerName: "156",
       notes: "151",
       files: ["70"],               // Tx1 includes the "Upload all" slot
@@ -153,49 +153,92 @@ export const INVOICE_SCHEMA = {
 
 export function getAns(answers, id) {
   const a = answers?.[id];
-  return a?.answer ?? a?.prettyFormat ?? "";
+  if (!a) return "";
+
+  // Prefer "answer" when present
+  const ans = a.answer;
+
+  // Common: string/number/bool
+  if (ans == null) return a.prettyFormat ?? "";
+  if (typeof ans === "string" || typeof ans === "number" || typeof ans === "boolean") return ans;
+
+  // File uploads often come back as arrays of URLs
+  if (Array.isArray(ans)) return ans;
+
+  // Datetime widgets often come back as objects
+  if (typeof ans === "object") {
+    if (typeof ans.datetime === "string") return ans.datetime;         // "YYYY-MM-DD HH:mm:ss"
+    if (typeof a.prettyFormat === "string") return a.prettyFormat;     // "MM/DD/YYYY HH:mm AM"
+    // last resort: try to reconstruct a basic date if parts exist
+    const { year, month, day } = ans;
+    if (year && month && day) return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  }
+
+  // Fallback
+  return a.prettyFormat ?? "";
 }
 
-export function getFiles(answers, ids=[]) {
+export function getFiles(answers, ids = []) {
   const out = [];
-  ids.forEach(id => {
+  for (const id of ids) {
     const v = getAns(answers, id);
     if (Array.isArray(v)) out.push(...v);
-    else if (v) out.push(v);
-  });
-  return out;
+    else if (typeof v === "string" && v.trim()) out.push(v.trim());
+  }
+  return Array.from(new Set(out)).filter(Boolean);
 }
 
 // Credit Card: iterate the N visible transactions (based on 93)
 // Falls back to “keep blocks that have a numeric cost”.
 export function* iterateCreditCardTxns(answers) {
   const countRaw = String(getAns(answers, CC_SCHEMA.globals.txnCount)).toLowerCase();
-  const mapCount = { one:1, two:2, three:3, four:4, five:5 };
-  let n = mapCount[Object.keys(mapCount).find(k => countRaw.includes(k))] ?? 5;
+  const mapCount = { one: 1, two: 2, three: 3, four: 4, five: 5 };
+  const n = mapCount[Object.keys(mapCount).find((k) => countRaw.includes(k))] ?? 5;
+
+  // Upload All belongs to Tx1 only
+  const uploadAll = getFiles(answers, [CC_SCHEMA.globals.uploadAllTxn1]);
 
   for (let i = 0; i < CC_SCHEMA.transactions.length; i++) {
     if (i >= n) break;
+
     const t = CC_SCHEMA.transactions[i];
 
     const cost = getAns(answers, t.cost);
-    const amount = Number(String(cost).replace(/[$,]/g,"")) || 0;
+    const amount = Number(String(cost).replace(/[$,]/g, "")) || 0;
+
+    const txnFiles = getFiles(answers, t.files || []);
+    const uploadAllForThisTxn = i === 0 ? uploadAll : [];
+    const files = Array.from(new Set([...txnFiles, ...uploadAllForThisTxn]));
 
     const obj = {
-      merchant:          getAns(answers, t.merchant),
-      expenseType:       getAns(answers, t.expenseType),
-      purpose:           getAns(answers, t.purpose),
+      merchant: getAns(answers, t.merchant),
+      expenseType: getAns(answers, t.expenseType),
+      purpose: getAns(answers, t.purpose),
       amount,
       supportiveProgram: getAns(answers, t.supportiveProgram),
       programOperations: t.programOperations ? getAns(answers, t.programOperations) : "",
-      customer:          getAns(answers, t.customerName),
-      notes:             t.notes ? getAns(answers, t.notes) : "",
-      files:             getFiles(answers, t.files || []),
-      isFlexTxn:         /^y/i.test(String(getAns(answers, t.flexToggle))),
+      customer: getAns(answers, t.customerName),
+      notes: t.notes ? getAns(answers, t.notes) : "",
+
+      // file transparency
+      files,
+      files_txn: txnFiles,
+      files_uploadAll: uploadAllForThisTxn,
+
+      isFlexTxn: /^(y|yes)\b/i.test(String(getAns(answers, t.flexToggle))),
     };
 
-    // Keep blocks that actually have a discernible amount or other core fields
-    const hasCore = obj.merchant || obj.expenseType || obj.supportiveProgram || obj.purpose || obj.amount !== 0 || obj.files.length;
-    if (hasCore) yield { n: i+1, ...obj };
+    // NOTE: do NOT let uploadAll create phantom txns
+    const hasCore =
+      obj.merchant ||
+      obj.expenseType ||
+      obj.supportiveProgram ||
+      obj.programOperations ||
+      obj.purpose ||
+      obj.amount !== 0 ||
+      txnFiles.length > 0;
+
+    if (hasCore) yield { n: i + 1, ...obj };
   }
 }
 
@@ -211,35 +254,72 @@ export function resolveInvoice(answers) {
     agenda:   getFiles(answers, [INVOICE_SCHEMA.globals.files.agenda]),
     w9:       getFiles(answers, [INVOICE_SCHEMA.globals.files.w9]),
   };
-  files_typed.all = [...files_typed.receipt, ...files_typed.required, ...files_typed.agenda, ...files_typed.w9];
+  files_typed.all = [
+    ...files_typed.receipt,
+    ...files_typed.required,
+    ...files_typed.agenda,
+    ...files_typed.w9,
+  ];
 
-  // Service Type + Flex
-  const serviceType   = getAns(answers, INVOICE_SCHEMA.globals.serviceType);
-  const otherService  = getAns(answers, INVOICE_SCHEMA.globals.otherService);
-  const isFlex = /yhdp\s*flex/i.test(serviceType);
+  // Service Type + Flex (handle “Other” text too)
+  const serviceType  = String(getAns(answers, INVOICE_SCHEMA.globals.serviceType) || "");
+  const otherService = String(getAns(answers, INVOICE_SCHEMA.globals.otherService) || "");
+  const isFlex = /yhdp\s*flex/i.test(serviceType) || /yhdp\s*flex/i.test(otherService);
 
   // Customer name
   const first = getAns(answers, INVOICE_SCHEMA.globals.firstName);
   const last  = getAns(answers, INVOICE_SCHEMA.globals.lastName);
   const customer = [first, last].filter(Boolean).join(" ").trim();
 
-  // WIOA scope/wex (only meaningful if a Project contains WIOA — caller can decide)
-  const wioaScopeWex = String(getAns(answers, INVOICE_SCHEMA.globals.wioaScopeWex));
+  // WIOA scope/wex (BUGFIX: Non-WEX contains "WEX", so test Non-WEX first)
+  const wioaScopeWex = String(getAns(answers, INVOICE_SCHEMA.globals.wioaScopeWex) || "");
   let serviceScope = "", wex = "";
   if (wioaScopeWex) {
     const s = wioaScopeWex.toUpperCase();
     serviceScope = s.includes("IS") ? "IS" : s.includes("OS") ? "OS" : "";
-    wex = s.includes("WEX") ? "WEX" : s.includes("NON-WEX") ? "Non-WEX" : "";
+    wex = s.includes("NON-WEX") ? "Non-WEX" : s.includes("WEX") ? "WEX" : "";
   }
 
-  // Path A: For a Customer → Program from Project (or Project Other)
   if (isCustomerPath) {
-    const project = INVOICE_SCHEMA.customerPath.projects
-      .map(id => getAns(answers, id))
-      .find(v => v) || "";
-    const projOther = INVOICE_SCHEMA.customerPath.projectOther
-      .map(id => getAns(answers, id))
-      .find(v => v) || "";
+    const multi = /^(y|yes)\b/i.test(String(getAns(answers, INVOICE_SCHEMA.customerPath.multiToggle)));
+
+    if (multi) {
+      const projects = INVOICE_SCHEMA.customerPath.projects.map((id) => getAns(answers, id) || "");
+      const projOther = INVOICE_SCHEMA.customerPath.projectOther.map((id) => getAns(answers, id) || "");
+      const amounts = INVOICE_SCHEMA.customerPath.amounts.map((id) => {
+        const v = getAns(answers, id);
+        return Number(String(v).replace(/[$,]/g, "")) || 0;
+      });
+
+      const splits = [];
+      const maxN = Math.max(projects.length, amounts.length);
+      for (let i = 0; i < maxN; i++) {
+        const p = projects[i] || "";
+        const o = projOther[i] || "";
+        const label = (p && !/other/i.test(p)) ? p : (o || p || "");
+        const amt = amounts[i] || 0;
+        if (!label && !amt) continue;
+        splits.push({ project: label, program: label, amount: amt });
+      }
+
+      return {
+        path: "customer",
+        program: splits[0]?.program || "",
+        project: "",
+        projectOther: "",
+        customer,
+        files_typed,
+        serviceType,
+        otherService,
+        isFlex,
+        serviceScope,
+        wex,
+        splits,
+      };
+    }
+
+    const project = INVOICE_SCHEMA.customerPath.projects.map((id) => getAns(answers, id)).find((v) => v) || "";
+    const projOther = INVOICE_SCHEMA.customerPath.projectOther.map((id) => getAns(answers, id)).find((v) => v) || "";
     const program = projOther || project || "";
 
     return {
@@ -254,20 +334,39 @@ export function resolveInvoice(answers) {
       isFlex,
       serviceScope,
       wex,
-      splits: null, // single amount path (use costSingle)
+      splits: null,
     };
   }
 
-  // Path B: For a Program → Program from Bill To (or Bill To Other)
-  const multi = /^y/i.test(String(getAns(answers, INVOICE_SCHEMA.programPath.multiToggle)));
-  const billTo = INVOICE_SCHEMA.programPath.billToList.map(id => getAns(answers, id));
-  const billToOther = INVOICE_SCHEMA.programPath.billToOther.map(id => getAns(answers, id));
-  const amounts = INVOICE_SCHEMA.programPath.amounts.map(id => {
+  // Program path
+  const multi = /^(y|yes)\b/i.test(String(getAns(answers, INVOICE_SCHEMA.programPath.multiToggle)));
+  const billTo = INVOICE_SCHEMA.programPath.billToList.map((id) => getAns(answers, id));
+  const billToOther = INVOICE_SCHEMA.programPath.billToOther.map((id) => getAns(answers, id));
+  const amounts = INVOICE_SCHEMA.programPath.amounts.map((id) => {
     const v = getAns(answers, id);
-    return Number(String(v).replace(/[$,]/g,"")) || 0;
+    return Number(String(v).replace(/[$,]/g, "")) || 0;
   });
 
-  // Pair in order; ignore empty rows
+  if (!multi) {
+    const bt0 = billTo[0] || "";
+    const o0 = billToOther[0] || "";
+    const label = (bt0 && !/other/i.test(bt0)) ? bt0 : (o0 || bt0 || "");
+    return {
+      path: "program",
+      program: label || "",
+      project: "",
+      projectOther: "",
+      customer: "",
+      files_typed,
+      serviceType,
+      otherService,
+      isFlex,
+      serviceScope,
+      wex,
+      splits: null,
+    };
+  }
+
   const splits = [];
   const maxN = Math.max(billTo.length, amounts.length);
   for (let i = 0; i < maxN; i++) {
@@ -279,7 +378,6 @@ export function resolveInvoice(answers) {
     splits.push({ billedTo: label, amount: amt, program: label });
   }
 
-  // Single path (multi==No) still comes through with 1 effective target
   return {
     path: "program",
     program: splits[0]?.program || "",

@@ -27,6 +27,52 @@ const DOC_MAP = (() => {
   }
 })();
 
+const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
+
+const rNumLS = (k, fallback, min = 1) => {
+  const v = rLS(k);
+  if (v == null) return fallback;            // <- prevent Number(null) === 0
+  const n = Number(v);
+  return Number.isFinite(n) && n >= min ? n : fallback;
+};
+
+function Resizer({ onDrag }) {
+  const onMouseDown = (e) => {
+    e.preventDefault();
+    const startX = e.clientX;
+
+    const move = (ev) => onDrag(ev.clientX - startX);
+    const up = () => {
+      window.removeEventListener("mousemove", move);
+      window.removeEventListener("mouseup", up);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", up);
+  };
+
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      title="Drag to resize"
+      style={{
+        width: 10,
+        cursor: "col-resize",
+        display: "flex",
+        alignItems: "stretch",
+        justifyContent: "center",
+        background: "transparent",
+      }}
+    >
+      <div style={{ width: 1, background: "rgba(0,0,0,0.10)" }} />
+    </div>
+  );
+}
+
 export default function Dashboard() {
   /* ─── Google auth gate ─── */
   const { data: session, status } = useSession();
@@ -64,6 +110,12 @@ export default function Dashboard() {
   const [searchForms,  setSearchForms]  = useState('');
   const [searchSubs,   setSearchSubs]   = useState('');
   const [loadingSubs,  setLoadingSubs]  = useState(false);
+
+  const [wForms, setWForms] = useState(() => rNumLS("ui_wForms", 320, 240));
+  const [wSubs,  setWSubs]  = useState(() => rNumLS("ui_wSubs",  420, 320));
+
+  useEffect(() => wLS("ui_wForms", String(wForms)), [wForms]);
+  useEffect(() => wLS("ui_wSubs",  String(wSubs)),  [wSubs]);
 
   /* ─── Get regular submissions (with caching) ─── */
   const loadSubs = useCallback((formId) => {
@@ -149,19 +201,20 @@ export default function Dashboard() {
     JSON.stringify(s.answers).toLowerCase().includes(searchSubs.toLowerCase())
   );
 
-  /* ─── UI ─── */
+/* ─── UI ─── */
   return (
-    <div style={{ height:'100vh', display:'flex', flexDirection:'column' }}>
-
+    <div style={{ height: "100vh", display: "flex", flexDirection: "column" }}>
       {/* header */}
-      <header style={{
-        padding:16,
-        borderBottom:'1px solid #ddd',
-        display:'flex',
-        alignItems:'center',
-        gap:20
-      }}>
-        <h1 style={{ margin:0 }}>JotForm Dashboard</h1>
+      <header
+        style={{
+          padding: 16,
+          borderBottom: "1px solid rgba(0,0,0,0.10)",
+          display: "flex",
+          alignItems: "center",
+          gap: 20,
+        }}
+      >
+        <h1 style={{ margin: 0 }}>JotForm Dashboard</h1>
         <ManualRefresh onClick={reloadAll} title="Reload forms" />
       </header>
 
@@ -173,58 +226,92 @@ export default function Dashboard() {
       />
 
       {/* body */}
-      <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
-        {/* sidebar */}
-        <FormSidebar
-          forms={filteredForms}
-          selected={selectedForm}
-          onSelect={setSelectedForm}
-          search={searchForms}
-          setSearch={setSearchForms}
-          tags={tagMap}
-          onEditTags={onEditTags}
-        />
+      <div
+        style={{
+          flex: 1,
+          overflow: "hidden",
+          display: "grid",
+          gridTemplateColumns: `${Math.max(wForms || 0, 260)}px 10px ${Math.max(wSubs || 0, 320)}px 10px 1fr`,
+        }}
+      >
+        {/* LEFT: forms */}
+        <div style={{ minWidth: 0, overflow: "hidden" }}>
+          <FormSidebar
+            forms={filteredForms}
+            selected={selectedForm}
+            onSelect={setSelectedForm}
+            search={searchForms}
+            setSearch={setSearchForms}
+            tags={tagMap}
+            onEditTags={onEditTags}
+          />
+        </div>
 
-        {/* submissions + detail */}
-        <div style={{ flex:1, display:'flex', overflow:'hidden' }}>
-          {/* submission list */}
-          <div style={{
-            width:'35%',
-            borderRight:'1px solid #ddd',
-            padding:16,
-            overflowY:'auto'
-          }}>
-            {selectedForm ? (
-              <>
-                <div style={{
-                  display:'flex',
-                  justifyContent:'space-between',
-                  alignItems:'baseline'
-                }}>
-                  <h2 style={{ margin:0 }}>{selectedForm.title}</h2>
+        {/* resize handle: forms <-> subs */}
+        <Resizer onDrag={(dx) => setWForms((w) => clamp(w + dx, 240, 520))} />
+
+        {/* MIDDLE: submissions */}
+        <div
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            background: "rgba(0,0,0,0.03)",
+            borderLeft: "1px solid rgba(0,0,0,0.08)",
+            borderRight: "1px solid rgba(0,0,0,0.08)",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {selectedForm ? (
+            <>
+              {/* fixed header area */}
+              <div
+                style={{
+                  padding: 16,
+                  borderBottom: "1px solid rgba(0,0,0,0.08)",
+                  background: "rgba(0,0,0,0.03)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "baseline",
+                    gap: 12,
+                  }}
+                >
+                  <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.2 }}>
+                    {selectedForm.title}
+                  </h2>
                   <a
                     href={`https://www.jotform.com/build/${selectedForm.id}`}
                     target="_blank"
                     rel="noreferrer"
-                  >Open ↗</a>
+                  >
+                    Open ↗
+                  </a>
                 </div>
 
-                <div style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  margin: '12px 0'
-                }}>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    marginTop: 12,
+                  }}
+                >
                   <input
                     style={{
                       flex: 1,
-                      padding:4,
-                      border:'1px solid #ccc',
-                      borderRadius:4
+                      padding: "6px 8px",
+                      border: "1px solid rgba(0,0,0,0.18)",
+                      borderRadius: 8,
+                      outline: "none",
+                      background: "#fff",
                     }}
                     placeholder="Search submissions…"
                     value={searchSubs}
-                    onChange={e => setSearchSubs(e.target.value)}
+                    onChange={(e) => setSearchSubs(e.target.value)}
                   />
                   <ManualRefresh
                     onClick={() => reloadSubs(selectedForm.id)}
@@ -232,47 +319,70 @@ export default function Dashboard() {
                     title="Reload submissions"
                   />
                 </div>
+              </div>
 
-                <SubList
-                  subs={filteredSubs}
-                  selected={selSub}
-                  onSelect={setSelSub}
-                />
-              </>
-            ) : (
-              <p>Select a form.</p>
-            )}
-          </div>
+              {/* scroll area */}
+              <div style={{ padding: 16, overflowY: "auto" }}>
+                <SubList subs={filteredSubs} selected={selSub} onSelect={setSelSub} />
+              </div>
+            </>
+          ) : (
+            <div style={{ padding: 16 }}>Select a form.</div>
+          )}
+        </div>
 
-          {/* submission detail */}
-          <div style={{ flex:1, padding:16, overflowY:'auto' }}>
-            {selSub ? (
-              <>
+        {/* resize handle: subs <-> detail */}
+        <Resizer onDrag={(dx) => setWSubs((w) => clamp(w + dx, 320, 700))} />
+
+        {/* RIGHT: detail */}
+        <div
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {selSub ? (
+            <>
+              {/* fixed header area */}
+              <div
+                style={{
+                  padding: 16,
+                  borderBottom: "1px solid rgba(0,0,0,0.10)",
+                  background: "#fff",
+                }}
+              >
                 <DownloadBar
                   formId={selectedForm?.id}
                   sub={selSub}
-                  /* Optional extra doc buttons per form (if provided) */
                   extraDocs={DOC_MAP[selectedForm?.id] || {}}
                 />
-                <AnswerTable answers={selSub.answers} subId={selSub.id} sub={selSub} />
-              </>
-            ) : (
-              <p>{selectedForm ? 'Select a submission.' : '—'}</p>
-            )}
-          </div>
-        </div>
+              </div>
 
-        {/* Tag Edit Dialog */}
-        {tagDialog && (
-          <FormTagPicker
-            open
-            existingTags={[...new Set(Object.values(tagMap).flat())]}
-            tags={tagMap[tagDialog.id] || []}
-            setTags={newTags => setRawTagMap(tagDialog.id, newTags)}
-            onClose={() => setTagDialog(null)}
-          />
-        )}
+              {/* scroll area */}
+              <div style={{ padding: 16, overflowY: "auto" }}>
+                <AnswerTable answers={selSub.answers} subId={selSub.id} sub={selSub} />
+              </div>
+            </>
+          ) : (
+            <div style={{ padding: 16 }}>
+              {selectedForm ? "Select a submission." : "—"}
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Tag Edit Dialog */}
+      {tagDialog && (
+        <FormTagPicker
+          open
+          existingTags={[...new Set(Object.values(tagMap).flat())]}
+          tags={tagMap[tagDialog.id] || []}
+          setTags={(newTags) => setRawTagMap(tagDialog.id, newTags)}
+          onClose={() => setTagDialog(null)}
+        />
+      )}
     </div>
   );
 }

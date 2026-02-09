@@ -15,13 +15,14 @@ export default function FormSidebar({
   return (
     <div
       style={{
-        width: '26%',
-        minWidth: 250,
-        borderRight: '1px solid #ddd',
+        height: "100%",
         padding: 16,
-        overflowY: 'auto'
+        overflowY: "auto",
+        borderRight: "1px solid rgba(0,0,0,0.08)",
+        background: "#fff",
       }}
     >
+
       {/* Search input */}
       <input
         style={{

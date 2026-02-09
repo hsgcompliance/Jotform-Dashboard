@@ -110,7 +110,7 @@ function joinName(a, b) {
 // ──────────────────────────────────────────────────────────────────────────────
 function normalizeCreditCard(sub) {
   const answers = sub?.answers || {};
-  const rawStatus = sub?.status || ""; 
+  const rawStatus = sub?.status || "";
   const createdAt = toISO(sub?.created_at) || new Date().toISOString();
 
   const cardLabel = textify(getAns(answers, CC_SCHEMA.globals.cardChoice)) || "Card";
@@ -121,27 +121,49 @@ function normalizeCreditCard(sub) {
 
   for (const t of iterateCreditCardTxns(answers)) {
     anyFlex = anyFlex || !!t.isFlexTxn;
+
+    const expenseType = textify(t.expenseType);
+    const expLower = expenseType.toLowerCase();
+
+    // Deterministic program selection (then fallback)
+    const programPrimary =
+      expLower.includes("customer")
+        ? textify(t.supportiveProgram || "")
+        : textify(t.programOperations || "");
+
+    const program = programPrimary || textify(t.supportiveProgram || t.programOperations || "");
+
     const customer = textify(t.customer);
 
     items.push({
       id: `${sub.id}-t${t.n}`,
       baseId: sub.id,
       source: "credit-card",
-      createdAt, // per spec: prefer created_at for CC
+      createdAt,
       card: cardLabel,
       cardBucket,
 
-      // normalized per-txn fields
       merchant: textify(t.merchant),
-      expenseType: textify(t.expenseType),
-      // program: whichever of Supportive Services / Program Operations is present (txn-scoped)
-      program: textify(t.supportiveProgram || t.programOperations || ""),
+      expenseType,
+      program,
+
+      // keep both (useful for debugging + future logic)
+      supportiveProgram_raw: textify(t.supportiveProgram),
+      programOperations_raw: textify(t.programOperations),
+
       customer,
       customerKey: makeCustomerKey(customer),
       amount: Number(t.amount || 0),
-      files: Array.isArray(t.files) ? t.files : (t.files ? [t.files] : []),
 
-      // txn-level flex (true only when this txn is Flex)
+      // now txn rows always see Upload All + per-txn files
+      files: Array.isArray(t.files) ? t.files : [],
+      files_txn: Array.isArray(t.files_txn) ? t.files_txn : [],
+      files_uploadAll: Array.isArray(t.files_uploadAll) ? t.files_uploadAll : [],
+
+      txnNumber: t.n,
+      purpose: textify(t.purpose),
+      notes: textify(t.notes),
+
       isFlex: !!t.isFlexTxn,
       flexReasons: t.isFlexTxn ? ["txn:flex"] : [],
 
@@ -150,17 +172,21 @@ function normalizeCreditCard(sub) {
     });
   }
 
-  // If nothing parsed, emit a “visibility row” with best-effort fields from Tx1
+  // visibility row fallback
   if (items.length === 0) {
     const t1 = CC_SCHEMA.transactions?.[0] || {};
     const cost = getAns(answers, t1.cost);
     const amount = Number(String(cost ?? "").replace(/[$,]/g, "")) || 0;
 
     const flexToggleVal = getAns(answers, t1.flexToggle);
-    const isFlexTxn = /^y/i.test(String(flexToggleVal || ""));
-    const customer = textify(getAns(answers, t1.customerName));
+    const isFlexTxn = /^(y|yes)\b/i.test(String(flexToggleVal || ""));
 
+    const customer = textify(getAns(answers, t1.customerName));
     anyFlex = anyFlex || isFlexTxn;
+
+    const uploadAll = getFiles(answers, [CC_SCHEMA.globals.uploadAllTxn1]);
+    const txnFiles = getFiles(answers, t1.files || []);
+    const filesAll = Array.from(new Set([...txnFiles, ...uploadAll]));
 
     items.push({
       id: `${sub.id}-t1`,
@@ -175,7 +201,11 @@ function normalizeCreditCard(sub) {
       customer,
       customerKey: makeCustomerKey(customer),
       amount,
-      files: getFiles(answers, t1.files || []),
+
+      files: filesAll,
+      files_txn: txnFiles,
+      files_uploadAll: uploadAll,
+
       isFlex: isFlexTxn,
       flexReasons: isFlexTxn ? ["txn:flex"] : [],
       raw: sub,
@@ -183,18 +213,17 @@ function normalizeCreditCard(sub) {
     });
   }
 
-  // Add submission-level flex awareness to each row (without losing txn flag)
   return items.map((r) => {
     const subFlex = computeFlex(answers, { anyFlexTxn: anyFlex });
     return {
       ...r,
       submissionIsFlex: anyFlex,
-      // unify: true if row OR submission flex detector says so
       isFlex: r.isFlex || subFlex.isFlex,
       flexReasons: Array.from(new Set([...(r.flexReasons || []), ...(subFlex.reasons || [])])),
     };
   });
 }
+
 
 // ──────────────────────────────────────────────────────────────────────────────
 // INVOICES (form 252674777246167)
@@ -283,9 +312,6 @@ function normalizeInvoice(sub) {
   return items;
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
-// Public API
-// ──────────────────────────────────────────────────────────────────────────────
 // ──────────────────────────────────────────────────────────────────────────────
 // Public API
 // ──────────────────────────────────────────────────────────────────────────────
