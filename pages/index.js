@@ -254,7 +254,7 @@ export default function Dashboard() {
                   /* Optional extra doc buttons per form (if provided) */
                   extraDocs={DOC_MAP[selectedForm?.id] || {}}
                 />
-                <AnswerTable answers={selSub.answers} subId={selSub.id} />
+                <AnswerTable answers={selSub.answers} subId={selSub.id} sub={selSub} />
               </>
             ) : (
               <p>{selectedForm ? 'Select a submission.' : '—'}</p>
