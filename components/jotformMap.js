@@ -113,7 +113,18 @@ function normalizeCreditCard(sub) {
   const rawStatus = sub?.status || "";
   const createdAt = toISO(sub?.created_at) || new Date().toISOString();
 
-  const cardLabel = textify(getAns(answers, CC_SCHEMA.globals.cardChoice)) || "Card";
+  const canonicalCardLabel = (v) => {
+    const s = String(v || "").trim().toLowerCase();
+    if (s === "mad card") return "MAD Card";
+    if (s === "youth card") return "Youth Card";
+    if (s === "housing card") return "Housing Card";
+    return String(v || "").trim();
+  };
+
+  const cardUsed  = canonicalCardLabel(getAns(answers, CC_SCHEMA.globals.cardUsed));
+  const cardLegacy = canonicalCardLabel(getAns(answers, CC_SCHEMA.globals.cardChoice));
+
+  const cardLabel = cardUsed || cardLegacy || "Card";
   const cardBucket = bucketCard(cardLabel);
 
   const items = [];
@@ -142,6 +153,8 @@ function normalizeCreditCard(sub) {
       createdAt,
       card: cardLabel,
       cardBucket,
+      cardUsed_raw: textify(getAns(answers, CC_SCHEMA.globals.cardUsed)),
+      cardChoice_raw: textify(getAns(answers, CC_SCHEMA.globals.cardChoice)),
 
       merchant: textify(t.merchant),
       expenseType,

@@ -374,7 +374,10 @@ function CCStructuredSubmissionView({ answers = {}, subId }) {
   const a = (id) => getAns(answers, id);
 
   // Header summary (card can be blank if workflow bypass)
-  const card = a(CC_SCHEMA.globals.cardChoice) || "Card";
+  const card =
+    a(CC_SCHEMA.globals.cardUsed) ||
+    a(CC_SCHEMA.globals.cardChoice) ||
+    "Card";
   const purchaser = a(CC_SCHEMA.globals.purchaserName);
   const email = a(CC_SCHEMA.globals.email);
   const whatPurchased = a("85") || a("167"); // legacy “purpose” helper

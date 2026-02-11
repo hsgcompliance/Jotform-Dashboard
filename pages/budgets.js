@@ -29,6 +29,20 @@ const MAX_ROWS_PER_BUDGET = 15;       // default visible rows per budget table
 const MAX_DETAILS_PER_CLIENT = 15;    // default visible rows per client (YHDP FLEX)
 
 /* ---------------- Utilities ---------------- */
+const ymd = (d) => {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+};
+
+const rolling4MonthSlice = () => {
+  const now = new Date();
+  const from = new Date(now.getFullYear(), now.getMonth() - 3, 1);  // start of month, 3 months ago
+  const to = new Date(now.getFullYear(), now.getMonth() + 1, 0);    // end of current month
+  return { key: "__rolling4__", label: "Last 4 months", from: ymd(from), to: ymd(to) };
+};
+
 const monthKey = (iso) => {
   const d = new Date(iso);
   const y = d.getFullYear();
@@ -1097,8 +1111,12 @@ export default function Budgets() {
   );
 
   // Default ALL TIME
-  const [activeSliceKey, setActiveSliceKey] = React.useState("");
-  const activeSlice = (cfg.slices || []).find((s) => s.key === activeSliceKey) || null;
+  const [activeSliceKey, setActiveSliceKey] = React.useState("__rolling4__");
+  const rollingSlice = rolling4MonthSlice();
+  const activeSlice =
+  activeSliceKey === "__rolling4__"
+    ? rollingSlice
+    : (cfg.slices || []).find((s) => s.key === activeSliceKey) || null;
 
   // Enrich items with canonical + virtual fields for robust rule matching
   const enriched = React.useMemo(() => {
@@ -1316,14 +1334,17 @@ export default function Budgets() {
               value={activeSliceKey}
               onChange={(e) => setActiveSliceKey(e.target.value)}
             >
-              <MenuItem value="">
-                <em>All time</em>
+            <MenuItem value="">
+              <em>All time</em>
+            </MenuItem>
+
+            <MenuItem value="__rolling4__">{rollingSlice.label}</MenuItem>
+
+            {(cfg.slices || []).map((s) => (
+              <MenuItem key={s.key} value={s.key}>
+                {s.label || s.key}
               </MenuItem>
-              {(cfg.slices || []).map((s) => (
-                <MenuItem key={s.key} value={s.key}>
-                  {s.label || s.key}
-                </MenuItem>
-              ))}
+            ))}
             </Select>
           </FormControl>
 

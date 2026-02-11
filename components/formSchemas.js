@@ -5,6 +5,7 @@
 export const CC_SCHEMA = {
   globals: {
     cardChoice:        "33",  // Card being returned (may be blank if workflow bypassed)
+    cardUsed:          "219",
     purchaserName:     "55",  // Name
     email:             "56",  // Email address
     returnDateTime:    "28",  // Return date & time (prefilled; buggy sometimes)
